@@ -165,7 +165,3 @@ Professional Mode exposes deeper control while maintaining strict interaction co
 │   (Source)    │   / GLOBAL    │  (Section)    │
 └───────────────┴───────────────┴───────────────┘
 ```
-
-
-
-
