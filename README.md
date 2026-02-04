@@ -9,7 +9,7 @@ The Eternal Mixtape (TEM) is a audio plugin / app that gives an easy, accessible
 Creating a remix often requires using musical information such as key signature, tempo and chord changes. 
 TEM aims to bridge the gap for anybody to quickly draft a mixtape idea.
 
-This project is inspired by [The Eternal Jukebox]([url](https://eternalboxmirror.xyz/jukebox_index.html)) and [Mixboard](https://www.nime.org/proceedings/2023/nime2023_69.pdf). The former offers a simplistic user interface with very little interaction, splicing up songs based on audio similarity. Our application will extend on this core concept while offering the user more agency to rearrange the song in their own way. The latter offers a DAW-like interface in which the user can choose the stems of different songs to create unique mashups in a single user-friendly environment.
+This project is inspired by [The Eternal Jukebox]((https://eternalboxmirror.xyz/jukebox_index.html)) and [Mixboard](https://www.nime.org/proceedings/2023/nime2023_69.pdf). The former offers a simplistic user interface with very little interaction, splicing up songs based on audio similarity. Our application will extend on this core concept while offering the user more agency to rearrange the song in their own way. The latter offers a DAW-like interface in which the user can choose the stems of different songs to create unique mashups in a single user-friendly environment.
 Our application approaches a different problem area by focusing on providing this functionality in a DAW for a more permament remix production tool that can take advantage of other DAW inclusions like stem-splitting and file management.
 
 ## Applications
