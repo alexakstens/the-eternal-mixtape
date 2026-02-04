@@ -28,8 +28,7 @@ The interaction flows in this order:
 
 ## Plans for implementation:
 <!-- ### flow chart, processing blocks, needed components, potential need for 3rd party libs -->
-[Flowchart]((https://app.diagrams.net/#G1KT8jlMNfz_zdqMqgA0Q41kSAAmD18AeE#%7B%22pageId%22%3A%22O037zaB-uulJ0Mrsv9BE%22%7D)
-
+[Flowchart](https://app.diagrams.net/#G1KT8jlMNfz_zdqMqgA0Q41kSAAmD18AeE#%7B%22pageId%22%3A%22O037zaB-uulJ0Mrsv9BE%22%7D)
 ## Algorithmic references 
 <!-- which reference do you base your algorithmic implementations on? -->
 
