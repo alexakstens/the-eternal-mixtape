@@ -1,4 +1,4 @@
-# the-eternal-mixtape
+# The Eternal Mixtape
 Final project for GT Audio Software Engineering MUSI6106, Spring 2026
 Authors: Alex Akstens, Ryan Baker, Matias Cevallos, Xiaosha Li, Marcus Parker
 
@@ -14,7 +14,7 @@ The user is able to use the application on its own, without a DAW.
 For the more advanced use case, users can load the application as a VST plugin in a Digital Audio Workstation (DAW).
 
 The users load in a song of their choice. TEM processes the song, extracting audio information such as key, bpm, and cuts the song up into different sections automatically.
-## functionality 
+## Functionality 
 <!-- from user point of view and how it differentiates from similar products -->
 The interaction flows in this order:
     1) the user uploads an audio file of a song into the application
@@ -28,13 +28,23 @@ Our application will extend on this core concept while offering the user more ag
 
 The latter offers a DAW-like interface in which the user can choose the stems of different songs to create unique mashups in a single user-friendly environment.
 Our application approaches a different problem area by focusing on providing this functionality in a DAW for a more permament remix production tool.
-## plans for implementation:
-### flow chart, processing blocks, needed components, potential need for 3rd party libs
+## Plans for implementation:
+<!-- ### flow chart, processing blocks, needed components, potential need for 3rd party libs -->
 
-## algorithmic references 
-### which reference do you base your algorithmic implementations on?
+## Algorithmic references 
+<!-- which reference do you base your algorithmic implementations on? -->
 
-## general responsibilities and work assignments (can overlap)
+## Roles
+### Alex - Audio DSP implementation
+- Alex will focus on the audio effects needed to enhance the mixtapes (e.g. pitch shifting)
+### Ryan - Audio ML implementation and project manager
+- Ryan will focus on implementing machine learning models to seperate track stems as well as managing the project (timeline, code rigor, testing and validation)
+### Matias - User Interface
+- Matias will focus on the visual design of the plugin's look and feel
+### Xiaosha - User Experience
+- Xiaosha will focus on the interactive flow of the plugin and overall UX
+### Marcus - Audio Analysis implementation
+- Marcus will focus on implementing the offline audio feature extraction and probabalistic composition
 
 ## (Bonus) If you can create a timeline and make use of the Github Projects functionality
 
