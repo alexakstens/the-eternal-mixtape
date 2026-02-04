@@ -1,5 +1,6 @@
 # The Eternal Mixtape
 Final project for GT Audio Software Engineering MUSI6106, Spring 2026
+
 Authors: Alex Akstens, Ryan Baker, Matias Cevallos, Evelyne Li, Marcus Parker
 
 The Eternal Mixtape (TEM) is a audio plugin / app that gives an easy, accessible workflow for quickly creating remixes of songs.
