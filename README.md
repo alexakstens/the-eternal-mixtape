@@ -28,9 +28,22 @@ The interaction flows in this order:
 
 ## Plans for implementation:
 <!-- ### flow chart, processing blocks, needed components, potential need for 3rd party libs -->
+### Stem Separation - The focus of the ML implementation, the algorithm should extract main stems of interest from the chosen song. Each stem will take information from the main audio file in the audio content analysis process. 
+### Audio Content Analysis - From input audio files, the offline processing will analyze each audio file and extract key and tempo and identify bar ends. 
+### Tempo Warping - To match tempo between songs for transitions and mashups,
+### Pitch Warping - To match pitch between songs for transitions and mashups
+### Track Selection - User Interface will allow the user to select tracks to mashup, sections to sequence, and levels/effects on each track.
+### Audio Output Stream - Summed outputs from each track, warped and repitched to a common tempo/key with optional effects mixed down to a stereo stream
+
 [Flowchart](https://app.diagrams.net/#G1KT8jlMNfz_zdqMqgA0Q41kSAAmD18AeE#%7B%22pageId%22%3A%22O037zaB-uulJ0Mrsv9BE%22%7D)
 ## Algorithmic references 
 <!-- which reference do you base your algorithmic implementations on? -->
+### Stem Separation - 
+### Audio Content Analysis - Musi6201 Infinite Jukebox assignment implementation
+### Tempo Warping -  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block)
+### Pitch Warping - A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline
+### Track Selection - User Interface or basic RNG-based selection
+### Audio Output Stream - JUCE implementation for audio flow
 
 ## Roles
 ### Alex - Audio DSP implementation
