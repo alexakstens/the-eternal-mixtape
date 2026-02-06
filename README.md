@@ -53,12 +53,22 @@ The interaction flows in this order:
 [Flowchart](https://app.diagrams.net/#G1KT8jlMNfz_zdqMqgA0Q41kSAAmD18AeE#%7B%22pageId%22%3A%22O037zaB-uulJ0Mrsv9BE%22%7D)
 ## Algorithmic references 
 <!-- which reference do you base your algorithmic implementations on? -->
-### Stem Separation - 
-### Audio Content Analysis - Musi6201 Infinite Jukebox assignment implementation
-### Tempo Warping -  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block)
-### Pitch Warping - A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline
-### Track Selection - User Interface or basic RNG-based selection
-### Audio Output Stream - JUCE implementation for audio flow
+**Stem Separation**
+ - 
+**Audio Content Analysis**
+- 
+
+**Tempo Warping**
+-  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block)
+
+**Pitch Warping**
+- A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline
+
+**Track Selection**
+- User Interface or basic RNG-based selection
+
+**Audio Output Stream** 
+- JUCE implementation for audio flow
 
 ## Roles
 ### Alex - Audio DSP implementation
