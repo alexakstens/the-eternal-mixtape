@@ -47,3 +47,70 @@ The interaction flows in this order:
 ## (Bonus) If you can create a timeline and make use of the Github Projects functionality
 
 
+
+## User Experience & Interaction Design (Evelyne Li)
+
+The Eternal Mixtape is designed as a **section-based structural remixing tool**.
+All user interactions operate on musically meaningful units rather than raw samples, prioritizing coherence, speed, and creative control.
+
+The system follows a fixed interaction pipeline: **import → offline analysis → structural rearrangement → playback/export**.
+
+### Core Interaction Flow
+
+1. **Audio Import**
+   Users load a single audio track as the source material.
+
+2. **Offline Analysis**
+   The system performs analysis to extract global tempo, a beat-aligned grid, and suggested section boundaries.
+
+3. **Section-Based Editing**
+   The analyzed track is segmented into reusable sections. Users interact with these sections rather than the raw waveform.
+
+4. **Arrangement & Playback**
+   Sections can be reordered, duplicated, or removed on a timeline, with immediate playback feedback.
+
+5. **Export**
+   The rearranged structure can be rendered or exported as a new audio file.
+
+### Interaction Modes
+
+To balance accessibility and control, The Eternal Mixtape provides two interaction modes that share the same analysis and audio engine.
+
+#### Standard Mode
+
+Standard Mode is designed for fast, intuitive remixing with minimal user decisions. This mode prioritizes immediacy and musical coherence, allowing users to focus on structural experimentation.
+
+* Section boundaries are generated automatically
+* Editing is constrained to beat-aligned operations
+* Crossfades are enabled by default
+* Only essential controls are exposed
+
+#### Professional Mode
+
+Professional Mode exposes deeper control while maintaining strict interaction constraints. All edits remain non-destructive and beat-aligned. The system does not allow free-form sample editing or unrestricted parameter manipulation.
+
+* Manual adjustment of section boundaries
+* Section-level parameters such as gain, crossfade length, and repetition
+* Timeline-based structural control
+* Optional, constrained pitch or time manipulation
+
+### Interaction Principles
+
+* User interactions operate on section-level abstractions, while audio processing is performed at the sample level internally
+* Sections are defined by musically meaningful boundaries, such as beat-aligned cut points and structurally coherent segments derived from analysis
+* Automatic analysis provides structural suggestions rather than fixed decisions
+* Immediate auditory feedback follows every structural change
+
+### Basic Components
+
+┌───────────────────────────────────────────────┐
+│                MAIN DISPLAY                   │
+│        (Waveform + Sections + Timeline)       │
+├───────────────┬───────────────┬───────────────┤
+│  LEFT CONTROL │   TRANSPORT   │ RIGHT CONTROL │
+│   (Source)    │   / GLOBAL    │  (Section)    │
+└───────────────┴───────────────┴───────────────┘
+
+
+
+
