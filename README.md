@@ -88,9 +88,6 @@ The interaction flows in this order:
 ### Marcus - Audio Analysis implementation
 - Marcus will focus on implementing the offline audio feature extraction and probabalistic composition
 
-## (Bonus) If you can create a timeline and make use of the Github Projects functionality
-
-
 
 ## User Experience & Interaction Design (Evelyne Li)
 
