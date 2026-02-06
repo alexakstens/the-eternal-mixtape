@@ -101,8 +101,9 @@ Professional Mode exposes deeper control while maintaining strict interaction co
 * Automatic analysis provides structural suggestions rather than fixed decisions
 * Immediate auditory feedback follows every structural change
 
-### Basic Components
+### Interface Overview
 
+```
 ┌───────────────────────────────────────────────┐
 │                MAIN DISPLAY                   │
 │        (Waveform + Sections + Timeline)       │
@@ -110,6 +111,7 @@ Professional Mode exposes deeper control while maintaining strict interaction co
 │  LEFT CONTROL │   TRANSPORT   │ RIGHT CONTROL │
 │   (Source)    │   / GLOBAL    │  (Section)    │
 └───────────────┴───────────────┴───────────────┘
+```
 
 
 
