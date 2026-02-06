@@ -53,10 +53,16 @@ The interaction flows in this order:
 [Flowchart](https://app.diagrams.net/#G1KT8jlMNfz_zdqMqgA0Q41kSAAmD18AeE#%7B%22pageId%22%3A%22O037zaB-uulJ0Mrsv9BE%22%7D)
 ## Algorithmic references 
 <!-- which reference do you base your algorithmic implementations on? -->
+
 **Stem Separation**
- - 
+- There are several challenges to implementing a machine learning (ML) model into a real-time audio C++ program. Some audio-specific tools like [RTNeural](https://github.com/jatinchowdhury18/RTNeural) are designed to implement neural networks for real-time inference, but lack the breadth to include support for complex models that are common in source seperation.
+- While ongoing projects have aims of [real-time stem seperation](https://www.gpu.audio/), that is not within scope for TEM. 
+- A popular stem separation model is [demucs](https://github.com/facebookresearch/demucs), which originally came out of Meta's audio research group.
+- A [fork of this model](https://github.com/sevagh/demucs.onnx) has been designed for C++ implementation by using the [ONNX](https://onnx.ai/) runtime.
+
+
 **Audio Content Analysis**
-- 
+- TODO
 
 **Tempo Warping**
 -  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block)
@@ -74,7 +80,7 @@ The interaction flows in this order:
 ### Alex - Audio DSP implementation
 - Alex will focus on the audio effects needed to enhance the mixtapes (e.g. pitch shifting)
 ### Ryan - Audio ML implementation and project manager
-- Ryan will focus on implementing machine learning models to seperate track stems as well as managing the project (timeline, code rigor, testing and validation)
+- Ryan will focus on implementing an ML model to seperate track stems as well as managing the project (timeline, code rigor, testing and validation)
 ### Matias - User Interface
 - Matias will focus on the visual design of the plugin's look and feel
 ### Evelyne - User Experience
