@@ -70,7 +70,7 @@ The interaction flows in this order:
 - TODO
 
 **Tempo Warping**
--  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block), done by resampling the original audio file. This will cause pitch warping (lower pitch when slowed, higher pitch whern sped-up), but as long as the relative change can be tracked, it can be corrected for in pitch warping.
+-  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block), done by resampling the original audio file. This will cause pitch warping (lower pitch when slowed, higher pitch whern sped-up), but as long as the relative change can be tracked, it can be corrected for in pitch warping. The benefit of this approach is computational speed - resampling is much faster than other tempo-warping algorithms. If pitch warping is done offline, tempo warping can be included in the same implementation by playing FFT windows for longer/shorter.
 
 **Pitch Warping**
 - A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline.
@@ -84,7 +84,7 @@ The interaction flows in this order:
 - User Interface or basic RNG-based selection
 
 **Audio Output Stream** 
-- JUCE implementation for audio flow
+- [JUCE's audio flow interface](https://forum.juce.com/t/audio-flow-for-dsp/12198) is a highly documented and easily implementable real-time audio stream manager for JUCE plugins. 
 
 ## Roles
 ### Alex - Audio DSP implementation
