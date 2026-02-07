@@ -13,84 +13,79 @@ include(PamplejuceMacOS)
 # Couple tweaks that IMO should be JUCE defaults
 include(JUCEDefaults)
 
-# Change me!
-# This is the internal name of the project and the name of JUCE's shared code target
-# Note: This cannot have spaces (it may be 2024, but you can't have it all!)
-# Worry not, JUCE's PRODUCT_NAME can have spaces (and is what DAWs display)
-set(PROJECT_NAME "Pamplejuce")
+set(PROJECT_NAME "DemucsGUI")
+set(PRODUCT_NAME "Demucs Source Separator")
+set(COMPANY_NAME "cmucs")
+set(BUNDLE_ID "com.cmucs.demucsgui")
 
-# Worry not, JUCE's PRODUCT_NAME can have spaces (and is what DAWs will display)
-# You can also just have it be the same thing as PROJECT_NAME
-# You may want to append the major version on the end of this (and PROJECT_NAME) ala:
-#   set(PROJECT_NAME "MyPlugin_v${MAJOR_VERSION}")
-# Doing so enables major versions to show up in IDEs and DAWs as separate plugins
-# allowing you to change parameters and behavior without breaking existing user projects
-set(PRODUCT_NAME "Pamplejuce Demo")
-
-# Change me! Used for the MacOS bundle name and Installers
-set(COMPANY_NAME "Pamplejuce Company")
-
-# Change me! Used for the MacOS bundle identifier (and signing)
-set(BUNDLE_ID "com.pamplejuce.pamplejuce")
-
-# Change me! Set the plugin formats you want built
-# Valid choices: AAX Unity VST VST3 AU AUv3 Standalone
-set(FORMATS Standalone AU VST3 AUv3)
+# Only Standalone — this is an offline processor, not a real-time plugin
+set(FORMATS Standalone)
 
 # Force JUCE to work with sccache
-# instruct MSVC to embed debug info (/Z7) instead of emitting a .pdb
 set(CMAKE_POLICY_DEFAULT_CMP0141        NEW      CACHE STRING "" FORCE)
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded CACHE STRING "" FORCE)
 
-# For simplicity, the name of the CMake project is also the name of the target
 project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 
-# JUCE is setup as a submodule in the /JUCE folder
-# Locally, you must run `git submodule update --init --recursive` once
-# and later `git submodule update --remote --merge` to keep it up to date
-# On Github Actions, this is done as a part of actions/checkout
+# ============================================================
+# External dependencies: cmucs core, ONNX Runtime, Eigen
+# ============================================================
+
+# Path to the cmucs project (source separation core)
+set(CMUCS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../MyCppProjects/cmucs" CACHE PATH
+    "Path to the cmucs project root")
+
+# Path to ONNX Runtime GPU package
+set(ONNXRUNTIME_ROOT "C:/Users/ryanb/onnxruntime-win-x64-gpu-1.24.1" CACHE PATH
+    "Path to extracted ONNX Runtime GPU package")
+
+# Build cmucs core as a static library (dsp + demucs, no CLI audio I/O)
+add_library(cmucs_core STATIC
+    "${CMUCS_ROOT}/src/dsp.cpp"
+    "${CMUCS_ROOT}/src/demucs.cpp"
+    "${CMUCS_ROOT}/src/audio_io.cpp"
+)
+target_include_directories(cmucs_core PUBLIC
+    "${CMUCS_ROOT}/src"
+    "${CMUCS_ROOT}/external/eigen-3.4.0"
+    "${CMUCS_ROOT}/external"
+    "${ONNXRUNTIME_ROOT}/include"
+)
+target_link_directories(cmucs_core PUBLIC "${ONNXRUNTIME_ROOT}/lib")
+target_link_libraries(cmucs_core PUBLIC onnxruntime)
+target_compile_features(cmucs_core PUBLIC cxx_std_17)
+
+if (MSVC)
+    target_compile_definitions(cmucs_core PUBLIC NOMINMAX _USE_MATH_DEFINES)
+    # Suppress Eigen warnings in MSVC
+    target_compile_options(cmucs_core PRIVATE /W3 /wd4554)
+endif()
+
+# ============================================================
+# JUCE setup
+# ============================================================
+
 add_subdirectory(JUCE)
 
 # Add CLAP format
 add_subdirectory(modules/clap-juce-extensions EXCLUDE_FROM_ALL)
 
-# Add any other modules you want modules here, before the juce_add_plugin call
-# juce_add_module(modules/my_module)
+# Melatonin inspector (useful for UI development)
+add_subdirectory(modules/melatonin_inspector)
 
-# This adds the melatonin inspector module
-add_subdirectory (modules/melatonin_inspector)
-
-# See `docs/CMake API.md` in the JUCE repo for all config options
 juce_add_plugin("${PROJECT_NAME}"
-    # Icons for the standalone app
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icon.png"
-
-    # Change me!
     COMPANY_NAME "${COMPANY_NAME}"
     BUNDLE_ID "${BUNDLE_ID}"
-
-    # On MacOS, plugin is copied to /Users/yourname/Library/Audio/Plug-Ins/
     COPY_PLUGIN_AFTER_BUILD TRUE
-
-    # Change me!
-    # A four-character plugin id
-    # First character MUST be uppercase for AU formats
-    PLUGIN_MANUFACTURER_CODE Pamp
-
-    # Change me!
-    # A unique four-character plugin id
-    # Note: this must have at least one upper-case character
-    PLUGIN_CODE P001
+    PLUGIN_MANUFACTURER_CODE Cmus
+    PLUGIN_CODE Dmcs
     FORMATS "${FORMATS}"
+    PRODUCT_NAME "${PRODUCT_NAME}"
+    # Need file dialog access
+    NEEDS_STORE_KIT FALSE)
 
-    # The name of your final executable
-    # This is how it's listed in the DAW
-    # This can be different from PROJECT_NAME and can have spaces!
-    # You might want to use v${MAJOR_VERSION} here once you go to v2...
-    PRODUCT_NAME "${PRODUCT_NAME}")
-
-# This lets us use our code in both the JUCE targets and our Test target
-# Without running into ODR violations
+# SharedCode interface library (pamplejuce pattern)
 add_library(SharedCode INTERFACE)
 
 clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
@@ -100,13 +95,10 @@ clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
 # Enable fast math, C++20 and a few other target defaults
 include(SharedCodeDefaults)
 
-
-# Manually list all .h and .cpp files for the plugin
-# If you are like me, you'll use globs for your sanity.
-# Just ensure you employ CONFIGURE_DEPENDS so the build system picks up changes
-# If you want to appease the CMake gods and avoid globs, manually add files like so:
-# set(SourceFiles Source/PluginEditor.h Source/PluginProcessor.h Source/PluginEditor.cpp Source/PluginProcessor.cpp)
-file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
+# Source files
+file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
 target_sources(SharedCode INTERFACE ${SourceFiles})
 
 # Adds a BinaryData target for embedding assets into the binary
@@ -115,37 +107,26 @@ include(Assets)
 # MacOS only: Cleans up folder and target organization on Xcode.
 include(XcodePrettify)
 
-# This is where you can set preprocessor definitions for JUCE and your plugin
+# Preprocessor definitions
 target_compile_definitions(SharedCode
     INTERFACE
-
-    # JUCE_WEB_BROWSER and JUCE_USE_CURL off by default
-    JUCE_WEB_BROWSER=0  # If you set this to 1, add `NEEDS_WEB_BROWSER TRUE` to the `juce_add_plugin` call
-    JUCE_USE_CURL=0     # If you set this to 1, add `NEEDS_CURL TRUE` to the `juce_add_plugin` call
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-
-    # Uncomment if you are paying for a an Indie/Pro license or releasing under GPLv3
-    # JUCE_DISPLAY_SPLASH_SCREEN=0
-
-    # lets the app known if we're Debug or Release
     CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
     VERSION="${CURRENT_VERSION}"
-
-    # JucePlugin_Name is for some reason doesn't use the nicer PRODUCT_NAME
-    PRODUCT_NAME_WITHOUT_VERSION="Pamplejuce"
+    PRODUCT_NAME_WITHOUT_VERSION="DemucsGUI"
 )
 
-# Link to any other modules you added (with juce_add_module) here!
-# Usually JUCE modules must have PRIVATE visibility
-# See https://github.com/juce-framework/JUCE/blob/master/docs/CMake%20API.md#juce_add_module
-# However, with Pamplejuce, you'll link modules to SharedCode with INTERFACE visibility
-# This allows the JUCE plugin targets and the Tests target to link against it
+# Link JUCE modules + cmucs_core to SharedCode
 target_link_libraries(SharedCode
     INTERFACE
     Assets
+    cmucs_core
     melatonin_inspector
     juce_audio_utils
     juce_audio_processors
+    juce_audio_formats
     juce_dsp
     juce_gui_basics
     juce_gui_extra
@@ -153,7 +134,7 @@ target_link_libraries(SharedCode
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
 
-# Link the JUCE plugin targets our SharedCode target
+# Link the JUCE plugin target to SharedCode
 target_link_libraries("${PROJECT_NAME}" PRIVATE SharedCode)
 
 # IPP support, comment out to disable
@@ -162,8 +143,47 @@ include(PamplejuceIPP)
 # Everything related to the tests target
 include(Tests)
 
-# A separate target for Benchmarks (keeps the Tests target fast)
+# A separate target for Benchmarks
 include(Benchmarks)
 
-# Output some config for CI (like our PRODUCT_NAME)
+# Output some config for CI
 include(GitHubENV)
+
+# ============================================================
+# Post-build: copy ONNX Runtime + cuDNN DLLs next to the executable
+# ============================================================
+
+# cuDNN path (auto-detect common NVIDIA install locations)
+set(CUDNN_BIN_DIR "" CACHE PATH "Path to cuDNN bin directory containing DLLs")
+
+if (WIN32 AND CUDNN_BIN_DIR STREQUAL "")
+    # Auto-detect cuDNN from common NVIDIA install paths
+    file(GLOB CUDNN_CANDIDATES "C:/Program Files/NVIDIA/CUDNN/v*/bin/12*/x64")
+    if (CUDNN_CANDIDATES)
+        list(GET CUDNN_CANDIDATES -1 CUDNN_BIN_DIR)
+        message(STATUS "Auto-detected cuDNN: ${CUDNN_BIN_DIR}")
+    endif()
+endif()
+
+if (WIN32)
+    # Copy ONNX Runtime DLLs
+    file(GLOB ORT_DLLS "${ONNXRUNTIME_ROOT}/lib/*.dll")
+    foreach(DLL ${ORT_DLLS})
+        add_custom_command(TARGET "${PROJECT_NAME}" POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${DLL}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Standalone")
+    endforeach()
+
+    # Copy cuDNN DLLs (required for CUDA execution provider)
+    if (NOT CUDNN_BIN_DIR STREQUAL "")
+        file(GLOB CUDNN_DLLS "${CUDNN_BIN_DIR}/*.dll")
+        foreach(DLL ${CUDNN_DLLS})
+            add_custom_command(TARGET "${PROJECT_NAME}" POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DLL}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Standalone")
+        endforeach()
+        message(STATUS "cuDNN DLLs will be copied from: ${CUDNN_BIN_DIR}")
+    else()
+        message(WARNING "cuDNN not found. GPU acceleration will not work. Set CUDNN_BIN_DIR to enable.")
+    endif()
+endif()

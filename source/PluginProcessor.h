@@ -1,10 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-
-#if (MSVC)
-#include "ipps.h"
-#endif
+#include "SeparationThread.h"
 
 class PluginProcessor : public juce::AudioProcessor
 {
@@ -37,6 +34,9 @@ public:
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
+
+    // The separation thread is accessible from the editor
+    SeparationThread separationThread;
 
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)

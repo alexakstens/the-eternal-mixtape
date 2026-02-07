@@ -161,7 +161,7 @@ jobs:
           SetFile -a C "${{ env.CLAP_PATH }}"
 
       - name: pkgbuild, Productbuild and Notarize
-        if: ${{ runner.os == 'macOS' }}
+        if: ${{ runner.os == 'macOS' && 1 == 0}} #disable code sign
         timeout-minutes: 5
         run: |
           pkgbuild --identifier "${{ env.BUNDLE_ID }}.au.pkg" --version $VERSION --component "${{ env.AU_PATH }}" --install-location "/Library/Audio/Plug-Ins/Components"  "packaging/${{ env.PRODUCT_NAME }}.au.pkg"
@@ -191,8 +191,8 @@ jobs:
           iscc "packaging\installer.iss"
           mv "packaging/Output/${{ env.ARTIFACT_NAME }}.exe" "${{ env.ARTIFACTS_PATH }}/"
 
-      - name: Codesign with Azure Trusted Signing
-        if: ${{ runner.os == 'Windows' }}
+      - name: Codesign with Azure Trusted Signing 
+        if: ${{ runner.os == 'Windows' && 1 == 0}} #disabled code signing
         uses: azure/trusted-signing-action@v0.5.11
         with:
           # The Azure Active Directory tenant (directory) ID.
