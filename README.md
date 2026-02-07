@@ -73,12 +73,12 @@ The interaction flows in this order:
 -  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block), done by resampling the original audio file. This will cause pitch warping (lower pitch when slowed, higher pitch whern sped-up), but as long as the relative change can be tracked, it can be corrected for in pitch warping. The benefit of this approach is computational speed - resampling is much faster than other tempo-warping algorithms. If pitch warping is done offline, tempo warping can be included in the same implementation by playing FFT windows for longer/shorter.
 
 **Pitch Warping**
-- A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline.
+- A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline. This task will likely be the bulk of DSP programming tasks, but will exponentially increase the duration of unique mixes that can be made. This is a high-value, high-effort component of the system. The DAFX textbook outlines in detail a block-by-block (FFT) approach that will be used in this implementation. This approach involves reassigning FFT blocks to different pitches while preserving the time domain content of the signal. 
 - Resources:
     -  https://www.fftw.org/ - C Library for highly optimized FFT
-    -  https://www.isca-archive.org/interspeech_2017/lenarczyk17_interspeech.pdf - Alternate approach to pitch shifting using phase vocoder
     -  https://people.ece.cornell.edu/land/courses/ece4760/FinalProjects/f2014/mjk339mm889/mjk339mm889/index.html - High-Level Outline of FFT Warping
-    -  DAFX 7.4.4 Pitch Shifting 
+    -  DAFX 2nd Edition - 7.4.4 Pitch Shifting
+    -  https://www.isca-archive.org/interspeech_2017/lenarczyk17_interspeech.pdf - Alternate approach to pitch shifting using phase vocoder
 
 **Track Selection**
 - User Interface or basic RNG-based selection
