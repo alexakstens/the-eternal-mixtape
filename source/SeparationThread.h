@@ -156,14 +156,30 @@ public:
             processingStartTime = juce::Time::getMillisecondCounterHiRes();
 
             auto result = cmucs::inference (model, eigenAudio,
-                [this] (float p, const std::string& msg)
+                [this] (float p, const std::string& msg) -> bool
                 {
                     progress.store (p);
                     statusMessage = juce::String (msg);
                     updateETA (p);
+                    return ! threadShouldExit();
                 });
 
-            if (threadShouldExit()) return;
+            if (threadShouldExit())
+            {
+                statusMessage = "Cancelled.";
+                status.store (Status::Idle);
+                model.session.reset();
+                return;
+            }
+
+            // Check if inference returned an empty result (cancelled internally)
+            if (result.size() == 0)
+            {
+                statusMessage = "Cancelled.";
+                status.store (Status::Idle);
+                model.session.reset();
+                return;
+            }
 
             // 5. Write stems
             status.store (Status::WritingStems);

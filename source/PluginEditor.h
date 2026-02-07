@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "WaveformDisplay.h"
 #include "BinaryData.h"
 #include "melatonin_inspector/melatonin_inspector.h"
 
@@ -23,6 +24,9 @@ public:
 private:
     PluginProcessor& processorRef;
     std::unique_ptr<melatonin::Inspector> inspector;
+
+    // Shared format manager for waveform thumbnails
+    juce::AudioFormatManager formatManager;
 
     // File selection
     juce::Label inputLabel { {}, "Input File:" };
@@ -50,13 +54,25 @@ private:
 
     double progressValue = 0.0;
 
+    // Waveform displays
+    WaveformDisplay inputWaveform { formatManager, "Input" };
+    juce::Label stemsLabel { {}, "Output Stems:" };
+
+    WaveformDisplay drumsWaveform  { formatManager, "Drums" };
+    WaveformDisplay bassWaveform   { formatManager, "Bass" };
+    WaveformDisplay otherWaveform  { formatManager, "Other" };
+    WaveformDisplay vocalsWaveform { formatManager, "Vocals" };
+
     void browseForInput();
     void browseForModel();
     void browseForOutput();
     void startProcessing();
     void cancelProcessing();
     void updateUI();
+    void loadInputWaveform (const juce::File& file);
+    void loadStemWaveforms();
 
+    bool stemsLoaded = false;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)

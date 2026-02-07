@@ -166,21 +166,26 @@ if (WIN32 AND CUDNN_BIN_DIR STREQUAL "")
 endif()
 
 if (WIN32)
+    # Copy DLLs next to the standalone executable.
+    # Use the _Standalone target so TARGET_FILE_DIR resolves to the exe directory
+    # (avoids the clean-build bug where "Standalone" would be treated as a filename).
+    set(_STANDALONE_TARGET "${PROJECT_NAME}_Standalone")
+
     # Copy ONNX Runtime DLLs
     file(GLOB ORT_DLLS "${ONNXRUNTIME_ROOT}/lib/*.dll")
     foreach(DLL ${ORT_DLLS})
-        add_custom_command(TARGET "${PROJECT_NAME}" POST_BUILD
+        add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${DLL}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Standalone")
+                "${DLL}" "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>")
     endforeach()
 
     # Copy cuDNN DLLs (required for CUDA execution provider)
     if (NOT CUDNN_BIN_DIR STREQUAL "")
         file(GLOB CUDNN_DLLS "${CUDNN_BIN_DIR}/*.dll")
         foreach(DLL ${CUDNN_DLLS})
-            add_custom_command(TARGET "${PROJECT_NAME}" POST_BUILD
+            add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${DLL}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Standalone")
+                    "${DLL}" "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>")
         endforeach()
         message(STATUS "cuDNN DLLs will be copied from: ${CUDNN_BIN_DIR}")
     else()

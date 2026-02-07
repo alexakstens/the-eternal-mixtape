@@ -3,6 +3,8 @@
 PluginEditor::PluginEditor (PluginProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p), progressBar (progressValue)
 {
+    formatManager.registerBasicFormats();
+
     // Labels
     for (auto* label : { &inputLabel, &modelLabel, &outputLabel })
     {
@@ -55,6 +57,23 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     gpuStatusLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (gpuStatusLabel);
 
+    // Waveform displays
+    addAndMakeVisible (inputWaveform);
+
+    stemsLabel.setJustificationType (juce::Justification::centredLeft);
+    stemsLabel.setFont (juce::Font (13.0f));
+    addAndMakeVisible (stemsLabel);
+
+    drumsWaveform.setWaveformColour (juce::Colour (0xffe57373));
+    bassWaveform.setWaveformColour (juce::Colour (0xff81c784));
+    otherWaveform.setWaveformColour (juce::Colour (0xffffb74d));
+    vocalsWaveform.setWaveformColour (juce::Colour (0xff4fc3f7));
+
+    addAndMakeVisible (drumsWaveform);
+    addAndMakeVisible (bassWaveform);
+    addAndMakeVisible (otherWaveform);
+    addAndMakeVisible (vocalsWaveform);
+
     // Inspector button (bottom-right, small)
     addAndMakeVisible (inspectButton);
     inspectButton.onClick = [this]
@@ -67,7 +86,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         inspector->setVisible (true);
     };
 
-    setSize (600, 340);
+    setSize (600, 580);
 }
 
 PluginEditor::~PluginEditor()
@@ -91,10 +110,10 @@ void PluginEditor::resized()
     auto area = getLocalBounds().reduced (15);
     area.removeFromTop (35); // title space
 
-    const int rowHeight = 30;
+    const int rowHeight = 28;
     const int labelWidth = 80;
     const int browseWidth = 70;
-    const int spacing = 5;
+    const int spacing = 4;
 
     // Input file row
     auto row = area.removeFromTop (rowHeight);
@@ -124,31 +143,54 @@ void PluginEditor::resized()
     row.removeFromRight (spacing);
     outputPathEditor.setBounds (row);
 
-    area.removeFromTop (15);
-
-    // CUDA toggle
-    row = area.removeFromTop (rowHeight);
-    cudaToggle.setBounds (row.removeFromLeft (200));
-
     area.removeFromTop (10);
+
+    // CUDA toggle + buttons on the same row
+    row = area.removeFromTop (30);
+    cudaToggle.setBounds (row.removeFromLeft (180));
+    row.removeFromLeft (20);
+    processButton.setBounds (row.removeFromLeft (100));
+    row.removeFromLeft (8);
+    cancelButton.setBounds (row.removeFromLeft (100));
+
+    area.removeFromTop (8);
+
+    // Input waveform
+    inputWaveform.setBounds (area.removeFromTop (70));
+
+    area.removeFromTop (4);
 
     // Progress bar
-    progressBar.setBounds (area.removeFromTop (25));
+    progressBar.setBounds (area.removeFromTop (22));
 
-    area.removeFromTop (10);
-
-    // Buttons row
-    row = area.removeFromTop (35);
-    processButton.setBounds (row.removeFromLeft (120));
-    row.removeFromLeft (10);
-    cancelButton.setBounds (row.removeFromLeft (120));
-
-    area.removeFromTop (10);
+    area.removeFromTop (4);
 
     // Status row
-    row = area.removeFromTop (25);
+    row = area.removeFromTop (22);
     statusLabel.setBounds (row.removeFromLeft (row.getWidth() / 2));
     gpuStatusLabel.setBounds (row);
+
+    area.removeFromTop (8);
+
+    // Stems section
+    stemsLabel.setBounds (area.removeFromTop (18));
+    area.removeFromTop (4);
+
+    // 2x2 grid for stem waveforms
+    int stemHeight = (area.getHeight() - spacing - 25) / 2; // leave room for inspector
+    int halfWidth = (area.getWidth() - spacing) / 2;
+
+    auto topRow = area.removeFromTop (stemHeight);
+    drumsWaveform.setBounds (topRow.removeFromLeft (halfWidth));
+    topRow.removeFromLeft (spacing);
+    bassWaveform.setBounds (topRow);
+
+    area.removeFromTop (spacing);
+
+    auto bottomRow = area.removeFromTop (stemHeight);
+    otherWaveform.setBounds (bottomRow.removeFromLeft (halfWidth));
+    bottomRow.removeFromLeft (spacing);
+    vocalsWaveform.setBounds (bottomRow);
 
     // Inspector button (bottom-right corner)
     inspectButton.setBounds (getLocalBounds().removeFromBottom (25).removeFromRight (80));
@@ -167,6 +209,11 @@ void PluginEditor::updateUI()
     progressValue = static_cast<double> (thread.getProgress());
     statusLabel.setText (thread.getStatusMessage(), juce::dontSendNotification);
 
+    auto etaMsg = thread.getETAMessage();
+    if (etaMsg.isNotEmpty())
+        statusLabel.setText (thread.getStatusMessage() + "  " + etaMsg,
+                             juce::dontSendNotification);
+
     bool isRunning = thread.isThreadRunning();
     processButton.setEnabled (! isRunning);
     cancelButton.setEnabled (isRunning);
@@ -174,8 +221,11 @@ void PluginEditor::updateUI()
     if (threadStatus == SeparationThread::Status::Complete)
     {
         stopTimer();
-        statusLabel.setText ("Separation complete!", juce::dontSendNotification);
+        statusLabel.setText (thread.getStatusMessage(), juce::dontSendNotification);
         progressValue = 1.0;
+
+        if (! stemsLoaded)
+            loadStemWaveforms();
     }
     else if (threadStatus == SeparationThread::Status::Error)
     {
@@ -216,6 +266,8 @@ void PluginEditor::filesDropped (const juce::StringArray& files, int, int)
             auto outputDir = inputFile.getParentDirectory()
                 .getChildFile (inputFile.getFileNameWithoutExtension() + "_stems");
             outputPathEditor.setText (outputDir.getFullPathName());
+
+            loadInputWaveform (inputFile);
             break;
         }
     }
@@ -240,6 +292,8 @@ void PluginEditor::browseForInput()
                 auto outputDir = file.getParentDirectory()
                     .getChildFile (file.getFileNameWithoutExtension() + "_stems");
                 outputPathEditor.setText (outputDir.getFullPathName());
+
+                loadInputWaveform (file);
             }
         });
 }
@@ -286,6 +340,13 @@ void PluginEditor::startProcessing()
         return;
     }
 
+    // Clear previous stem waveforms
+    stemsLoaded = false;
+    drumsWaveform.clear();
+    bassWaveform.clear();
+    otherWaveform.clear();
+    vocalsWaveform.clear();
+
     auto& thread = processorRef.separationThread;
     thread.configure (
         juce::File (inputPath),
@@ -297,11 +358,37 @@ void PluginEditor::startProcessing()
     progressValue = 0.0;
     gpuStatusLabel.setText ("", juce::dontSendNotification);
     thread.startThread();
-    startTimerHz (15); // Update UI at 15 Hz
+    startTimerHz (15);
 }
 
 void PluginEditor::cancelProcessing()
 {
     processorRef.separationThread.signalThreadShouldExit();
     statusLabel.setText ("Cancelling...", juce::dontSendNotification);
+}
+
+void PluginEditor::loadInputWaveform (const juce::File& file)
+{
+    inputWaveform.loadFile (file);
+}
+
+void PluginEditor::loadStemWaveforms()
+{
+    auto outputPath = outputPathEditor.getText();
+    if (outputPath.isEmpty())
+        return;
+
+    auto outputDir = juce::File (outputPath);
+
+    auto drumsFile  = outputDir.getChildFile ("drums.wav");
+    auto bassFile   = outputDir.getChildFile ("bass.wav");
+    auto otherFile  = outputDir.getChildFile ("other.wav");
+    auto vocalsFile = outputDir.getChildFile ("vocals.wav");
+
+    if (drumsFile.existsAsFile())  drumsWaveform.loadFile (drumsFile);
+    if (bassFile.existsAsFile())   bassWaveform.loadFile (bassFile);
+    if (otherFile.existsAsFile())  otherWaveform.loadFile (otherFile);
+    if (vocalsFile.existsAsFile()) vocalsWaveform.loadFile (vocalsFile);
+
+    stemsLoaded = true;
 }
