@@ -70,7 +70,7 @@ The interaction flows in this order:
 - TODO
 
 **Tempo Warping**
--  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block)
+-  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block), done by resampling the original audio file. This will cause pitch warping (lower pitch when slowed, higher pitch whern sped-up), but as long as the relative change can be tracked, it can be corrected for in pitch warping.
 
 **Pitch Warping**
 - A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline.
