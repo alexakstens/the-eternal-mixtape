@@ -73,7 +73,12 @@ The interaction flows in this order:
 -  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block)
 
 **Pitch Warping**
-- A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline
+- A FFT-based pitch warping algorithm will be implemented after the time warping, TBD on real time or offline.
+- Resources:
+    -  https://www.fftw.org/ - C Library for highly optimized FFT
+    -  https://www.isca-archive.org/interspeech_2017/lenarczyk17_interspeech.pdf - Alternate approach to pitch shifting using phase vocoder
+    -  https://people.ece.cornell.edu/land/courses/ece4760/FinalProjects/f2014/mjk339mm889/mjk339mm889/index.html - High-Level Outline of FFT Warping
+    -  DAFX 7.4.4 Pitch Shifting 
 
 **Track Selection**
 - User Interface or basic RNG-based selection
