@@ -50,7 +50,12 @@ The interaction flows in this order:
 **Audio Output Stream** 
 - Summed outputs from each track, warped and repitched to a common tempo/key with optional effects mixed down to a stereo stream
 
-[Flowchart](https://app.diagrams.net/#G1KT8jlMNfz_zdqMqgA0Q41kSAAmD18AeE#%7B%22pageId%22%3A%22O037zaB-uulJ0Mrsv9BE%22%7D)
+[Flowchart](https://drive.google.com/file/d/1KT8jlMNfz_zdqMqgA0Q41kSAAmD18AeE/view?usp=sharing)
+
+<img width="768" height="265" alt="Screenshot 2026-02-06 at 18 47 19" src="https://github.com/user-attachments/assets/4fe498a8-33f7-4ead-8c59-0dd0ae070bdf" />
+
+
+
 ## Algorithmic references 
 <!-- which reference do you base your algorithmic implementations on? -->
 
