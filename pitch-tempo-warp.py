@@ -62,8 +62,9 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
         audioOut[frameIdx*hopSize:(frameIdx*hopSize)+winSize,1]+=frameAudioR[:nFFT//2]
 
     ### Normalize and Convert Output Type
-    audioOut=audioOut/max(max(audioOut[:,0]),max(audioOut[:,1]))
     audioOut=audioOut.astype("float32")
+    audioOut=audioOut/max(max(audioOut[:,0]),max(audioOut[:,1]))
+    
 
 
     ### Write Output
