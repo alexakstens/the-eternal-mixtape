@@ -67,7 +67,15 @@ The interaction flows in this order:
 
 
 **Audio Content Analysis**
-- TODO
+**Audio Content Analysis** 
+- To provide structural awareness, the analysis engine implements a multi-pass offline processing pipeline using the Aubio (https://aubio.org/) C library and custom linear algebra routines.
+- **Beat Tracking & Temporal Grid:** A temporal grid is established using a spectral-flux-based onset detection and a dynamic programming beat-tracking algorithm (`aubio_tempo`). This serves as the "atomic unit" for all subsequent structural jumps.
+- **Spectral Fingerprinting (MFCC):** For each detected beat, the system extracts a 13-coefficient Mel-Frequency Cepstral Coefficient (MFCC) vector. These vectors are aggregated via a mean-pooling strategy over the duration of the beat to create a stable "timbral fingerprint" for that specific musical moment.
+- **Self-Similarity Matrix (SSM):** A global similarity map is constructed by calculating the pairwise Euclidean distance between all beat-level MFCC vectors. This matrix is normalized to a [0.1] similarity scale, where $1.0$ indicates an identical timbral match.
+- **Structural Segmentation (Foote Novelty):** 
+    - The system implements a **Foote Novelty** algorithm by convolving the SSM with a Gaussian-tapered checkerboard kernel. 
+    - This identifies high-novelty "boundary" points (transitions between verse/chorus) by detecting changes in the local self-similarity texture.
+- **Probabilistic Transition Mapping:** The analysis identifies "jump points"—regions where non-sequential beats exhibit similarity above a defined threshold (typically $>0.90$). These points are stored in a transition graph used by the playback engine to create seamless, "infinite" remixes. This logic will be extended to remix two songs for transitioning to the next song in a playlist.
 
 **Tempo Warping**
 -  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block), done by resampling the original audio file. This will cause pitch warping (lower pitch when slowed, higher pitch whern sped-up), but as long as the relative change can be tracked, it can be corrected for in pitch warping. The benefit of this approach is computational speed - resampling is much faster than other tempo-warping algorithms. If pitch warping is done offline, tempo warping can be included in the same implementation by playing FFT windows for longer/shorter.
