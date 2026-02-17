@@ -28,6 +28,14 @@ The interaction flows in this order:
     2) the application parses the songs using offline audio analysis
     3) the user is presented with a low-complexity user interface that allows them to rearrange the song as they please
 
+## User Experience
+The user experience is designed to be **intuitive, engaging, and empowering**. The core of the application is a visual, block-based timeline where users can creatively arrange their mixtape.
+
+- **Simplified Workflow**: Users import songs, which are automatically analyzed for key, tempo, and structure, and then presented as colored blocks.
+- **Drag-and-Drop Canvas**: The main interaction involves dragging these musical blocks from a library onto a remix timeline to build a new sequence.
+- **Intelligent Assistance**: The application automatically handles complex tasks like tempo and pitch matching, allowing the user to focus on creativity.
+- **Immediate Auditory Feedback**: Changes made on the timeline are heard in real-time, creating a fluid and responsive experience.
+
 ## Plans for implementation:
 <!-- ### flow chart, processing blocks, needed components, potential need for 3rd party libs -->
 **Stem Separation**
