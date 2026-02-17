@@ -4,6 +4,8 @@ Final project for GT Audio Software Engineering MUSI6106, Spring 2026
 Authors: Alex Akstens, Ryan Baker, Matias Cevallos, Evelyne Li, Marcus Parker
 
 The Eternal Mixtape (TEM) is a audio plugin / app that gives an easy, accessible workflow for quickly creating remixes of songs.
+
+Made using the [Pamplejuce template](https://github.com/sudara/pamplejuce)
 ## Motivation
 <!-- problem to be solved, why is there a need for this -->
 Creating a remix often requires using musical information such as key signature, tempo and chord changes. 
