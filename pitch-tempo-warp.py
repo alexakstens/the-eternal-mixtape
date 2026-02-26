@@ -1,4 +1,4 @@
-def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, target_tempo, nFFT=4096, winSize=2048, hopSize=512):
+def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, target_tempo, nFFT=2048, winSize=2048, hopSize=512):
     """
     Adjust Time and Pitch of input audio file \n
     Rewrites audio file with new tempo and key through FFT/IFFT Resynthesis \n
@@ -15,7 +15,6 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     """
     import numpy as np
     from scipy.io import wavfile
-    import scipy.fft as fft
     import scipy.signal as sig
 
     def m_to_f(midiNote):
@@ -33,38 +32,97 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     audioIn=audioIn/max(max(audioIn[:,0]),max(audioIn[:,1]))
 
     ### Define Ratios for Current and Target Key/BPM
-
     keyRatio=m_to_f(target_key_midi) / m_to_f(input_key_midi)
     tempoRatio=target_tempo/input_tempo
 
-    ### Init Audio File Output
-    audioOut=np.zeros((int(np.ceil(len(audioIn[:,0]) / hopSize) * hopSize + winSize),2),dtype="complex128")
+    ### Adapted from DAFx 7.4.4 - not entirely faithful
 
+    n2 = 512 # synthesis step size
+    n1 = int(n2/keyRatio) # analysis step size
+
+    ww=2*np.pi*n1*np.arange(winSize/2).reshape(-1,1)/winSize
+
+    audioIn=np.concat((np.zeros([winSize,2]),audioIn,np.zeros([winSize-np.mod(len(audioIn),n1),2])))
+
+    audioOut=np.zeros_like(audioIn)
+    phi0L=np.zeros(winSize)
+    phi0R=np.zeros(winSize)
+    psiL=np.zeros(winSize)
+    psiR=np.zeros(winSize)
+
+    ### Linear Interpolation of a grain of length nFFT
+    lx=int(np.floor(winSize*n1/n2))
+    x=np.arange(lx)*(winSize/lx)
+    ix=np.floor(x).astype(int)
+    ix1=ix+1
+    dx=x-ix
+    dx1=1.0-dx
 
     ### Process Block
-    for frameIdx in range(0,int(len(audioIn[:,0])/hopSize)):
-        frameAudioL=audioIn[frameIdx*hopSize:(frameIdx*hopSize)+winSize,0]
-        frameAudioR=audioIn[frameIdx*hopSize:(frameIdx*hopSize)+winSize,1]
+    pIn=0
+    pOut=0
+    pEnd=len(audioIn)-winSize
+    while pIn<pEnd:
 
-        frameFftL=fft.fft(frameAudioL*sig.windows.hann(len(frameAudioL)),nFFT)
-        frameFftR=fft.fft(frameAudioR*sig.windows.hann(len(frameAudioR)),nFFT)
-        #xf=fft.fftfreq(nFFT,1/sr)*keyRatio
+        grainL=audioIn[pIn:pIn+winSize,0]
+        grainR=audioIn[pIn:pIn+winSize,1]
 
-        """ ============================================================================================================
-        PITCH AND TiME SHIFTING HERE
-        ============================================================================================================ """
+        win1=sig.windows.hamming(winSize,"periodic")
+        win2=win1
 
-        frameAudioL=fft.ifft(frameFftL,nFFT)
-        frameAudioR=fft.ifft(frameFftR,nFFT)
+        ### Take FFT
+        frameFftL=np.fft.fftshift(grainL*win1)
+        frameFftR=np.fft.fftshift(grainR*win1)
+        rL=abs(frameFftL)
+        rR=abs(frameFftR)
+        phiL=np.angle(frameFftL)
+        phiR=np.angle(frameFftR)
+
+        ### Compute Phase Increment
+        deltaPhiL=ww+((((phiL-phi0L-ww) + np.pi) % (2 * np.pi) - np.pi))
+        deltaPhiR=ww+((((phiR-phi0R-ww) + np.pi) % (2 * np.pi) - np.pi))
+        phi0L=phiL
+        phi0R=phiR
+
+        psiL=((psiL+deltaPhiL*tempoRatio) + np.pi) % (2 * np.pi) - np.pi
+        psiR=((psiR+deltaPhiR*tempoRatio) + np.pi) % (2 * np.pi) - np.pi
+
+        ### Synthesize time-scaled grain
+        ftL=(rL*np.exp(1j*psiL))
+        ftR=(rR*np.exp(1j*psiR))
+        grainL=np.fft.fftshift(np.real(np.fft.ifft(ftL)))*win2  # why another fft on the ifft?
+        grainR=np.fft.fftshift(np.real(np.fft.ifft(ftR)))*win2
+
+        ### Interpolate Grain
+        grain2L=np.append(grainL,0)
+        grain2R=np.append(grainR,0)
+        grain3L=grain2L[ix]*dx1 + grain2L[ix1]*dx
+        grain3R=grain2R[ix]*dx1 + grain2R[ix1]*dx
 
         ### Overlap-Add:
-        audioOut[frameIdx*hopSize:(frameIdx*hopSize)+winSize,0]+=frameAudioL[:nFFT//2]
-        audioOut[frameIdx*hopSize:(frameIdx*hopSize)+winSize,1]+=frameAudioR[:nFFT//2]
+        audioOut[pOut:pOut+lx,0]+=grain3L
+        audioOut[pOut:pOut+lx,1]+=grain3R
+
+        pIn+=n1
+        pOut+=n1
+        print(pIn/pEnd)
+
+        """
+        There is a significant slow-down somewhere in this loop. 
+        The initial FFT-IFFT without time/pitch logic was much faster.
+        
+        Another approach might want to reuse that structure and shift the 
+        bins before IFFT to do pitch warping and interpolate for stretching 
+        before the FFT begins at all (including the slow-down pitch warp 
+        factor in the FFT-IFFT processing
+        
+        DAFx 7.4.4's Filter-bank approach (sum of sinusoids) is described as a more efficient pitch-shiftinmg algorithm
+        """
+
 
     ### Normalize and Convert Output Type
-    audioOut=audioOut/max(max(audioOut[:,0]),max(audioOut[:,1]))
     audioOut=audioOut.astype("float32")
-
+    audioOut=audioOut/max(max(audioOut[:,0]),max(audioOut[:,1]))
 
     ### Write Output
     wavfile.write(input_path.split(".")[0]+"_"+str(target_key_midi)+".wav",sr,audioOut)
