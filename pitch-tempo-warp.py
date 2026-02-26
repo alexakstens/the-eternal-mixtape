@@ -16,6 +16,7 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     import numpy as np
     from scipy.io import wavfile
     import scipy.signal as sig
+    import time
 
     def m_to_f(midiNote):
         """
@@ -29,7 +30,7 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
 
     ### Read In Audio File
     sr,audioIn=wavfile.read(input_path)
-    audioIn=audioIn/max(max(audioIn[:,0]),max(audioIn[:,1]))
+    audioIn = audioIn / np.max(np.abs(audioIn))
 
     ### Define Ratios for Current and Target Key/BPM
     keyRatio=m_to_f(target_key_midi) / m_to_f(input_key_midi)
@@ -40,11 +41,11 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     n2 = 512 # synthesis step size
     n1 = int(n2/keyRatio) # analysis step size
 
-    ww=2*np.pi*n1*np.arange(winSize/2).reshape(-1,1)/winSize
-
-    audioIn=np.concat((np.zeros([winSize,2]),audioIn,np.zeros([winSize-np.mod(len(audioIn),n1),2])))
-
-    audioOut=np.zeros_like(audioIn)
+    ww = 2*np.pi*n1*np.arange(winSize)/winSize  # shape (2048,)
+    
+    audioIn=np.concatenate((np.zeros([winSize,2]),audioIn,np.zeros([winSize-np.mod(len(audioIn),n1),2])))
+    output_len = int(np.ceil(len(audioIn) * n2 / n1)) + winSize
+    audioOut=np.zeros((output_len, 2))
     phi0L=np.zeros(winSize)
     phi0R=np.zeros(winSize)
     psiL=np.zeros(winSize)
@@ -62,19 +63,24 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     pIn=0
     pOut=0
     pEnd=len(audioIn)-winSize
+    
+    win1=sig.windows.hamming(winSize,"periodic")
+    win2=win1
+    
+    # Time benchmarking
+    process_times = []
+    
     while pIn<pEnd:
+        iteration_start = time.perf_counter()
 
         grainL=audioIn[pIn:pIn+winSize,0]
         grainR=audioIn[pIn:pIn+winSize,1]
 
-        win1=sig.windows.hamming(winSize,"periodic")
-        win2=win1
-
         ### Take FFT
-        frameFftL=np.fft.fftshift(grainL*win1)
-        frameFftR=np.fft.fftshift(grainR*win1)
-        rL=abs(frameFftL)
-        rR=abs(frameFftR)
+        frameFftL=np.fft.fft(grainL*win1)
+        frameFftR=np.fft.fft(grainR*win1)
+        rL=np.abs(frameFftL)
+        rR=np.abs(frameFftR)
         phiL=np.angle(frameFftL)
         phiR=np.angle(frameFftR)
 
@@ -104,8 +110,12 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
         audioOut[pOut:pOut+lx,1]+=grain3R
 
         pIn+=n1
-        pOut+=n1
-        print(pIn/pEnd)
+        pOut+=n2
+        # print(pIn/pEnd)
+        
+        # Record iteration time
+        iteration_end = time.perf_counter()
+        process_times.append(iteration_end - iteration_start)
 
         """
         There is a significant slow-down somewhere in this loop. 
@@ -118,15 +128,25 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
         
         DAFx 7.4.4's Filter-bank approach (sum of sinusoids) is described as a more efficient pitch-shiftinmg algorithm
         """
-
+    
+    # Report benchmarking statistics
+    if process_times:
+        avg_time = np.mean(process_times) * 1000  # Convert to milliseconds
+        min_time = np.min(process_times) * 1000
+        max_time = np.max(process_times) * 1000
+        total_time = np.sum(process_times)
+        print(f"\nProcess Block Benchmarking:")
+        print(f"  Total iterations: {len(process_times)}")
+        print(f"  Average time per iteration: {avg_time:.3f} ms")
+        print(f"  Min time: {min_time:.3f} ms")
+        print(f"  Max time: {max_time:.3f} ms")
+        print(f"  Total processing time: {total_time:.3f} s\n")
 
     ### Normalize and Convert Output Type
     audioOut=audioOut.astype("float32")
-    audioOut=audioOut/max(max(audioOut[:,0]),max(audioOut[:,1]))
-
+    audioOut = audioOut / np.max(np.abs(audioOut))
     ### Write Output
     wavfile.write(input_path.split(".")[0]+"_"+str(target_key_midi)+".wav",sr,audioOut)
     return None
 
-pitch_tempo_warp("Luxury.wav",60,120,72,100)
-
+pitch_tempo_warp("Luxury.wav",60,120,62,120)
