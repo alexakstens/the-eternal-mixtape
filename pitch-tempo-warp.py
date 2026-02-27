@@ -1,16 +1,14 @@
-def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, target_tempo, nFFT=2048, winSize=2048, hopSize=512):
+def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, target_tempo, winSize=2048, hopSize=256):
     """
-    Adjust Time and Pitch of input audio file \n
-    Rewrites audio file with new tempo and key through FFT/IFFT Resynthesis \n
-    Hann window used for FFT analysis, overlap-add method used for resynthesis \n
+    Adapted from DAFx 2º Edition, Sec 7.4.4 \n
+    Adjust time and pitch of input audio file using an FFT-IFFT approach \n
+    Writes the output audiofile to "[NAME]_Key[target_key_midi]_Tempo[target_tempo].wav"
     :param input_path: Path to Song (.wav)
     :param input_key_midi: Input Song Midi Note Value of Key (C4=60)
     :param input_tempo: Input Song BPM
     :param target_key_midi: Target Midi Note Value of Key
     :param target_tempo: Target BPM
-    :param nFFT: number of samples for FFT/IFFT (0-padded or truncated if nFFT!=len(frame)
     :param winSize: Size in samples of window for FFT
-    :param hopSize: Size in samples of frame-shift
     :return: None
     """
     import numpy as np
@@ -18,12 +16,19 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     import scipy.signal as sig
     import time
 
+
+    """
+    Parameter Notes:
+    * Typical of FFTs, nFFT tradeoff b/w freq and time precision is VERY noticeable without hop/overlap
+    * Too big a difference between winSize and hopSize creates an audible delay (>8ms for 4096 nFFT)
+    * We should implement zero-padding to get more precision out of the FFT, (at least) double the length of each frame
+    """
+
     def m_to_f(midiNote):
         """
         Helper Function to convert midi note to frequency \n
         :param midiNote: Midi Note Value (C4=60) \n
         :return: Freq (Hz) \n
-
         """
         return 440.0 * (2**((midiNote - 69) / 12.0))
 
@@ -36,16 +41,18 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     keyRatio=m_to_f(target_key_midi) / m_to_f(input_key_midi)
     tempoRatio=target_tempo/input_tempo
 
-    ### Adapted from DAFx 7.4.4 - not entirely faithful
+    ### Define Step Sizes
+    n2 = winSize # synthesis
+    n1 = int(n2/keyRatio) # analysis
 
-    n2 = 512 # synthesis step size
-    n1 = int(n2/keyRatio) # analysis step size
 
-    ww = 2*np.pi*n1*np.arange(winSize)/winSize  # shape (2048,)
-    
+    ### Initialize Audio I/O
     audioIn=np.concatenate((np.zeros([winSize,2]),audioIn,np.zeros([winSize-np.mod(len(audioIn),n1),2])))
     output_len = int(np.ceil(len(audioIn) * n2 / n1)) + winSize
     audioOut=np.zeros((output_len, 2))
+
+    ### Initialize Phase Increments
+    ww = 2*np.pi*n1*np.arange(winSize)/winSize  # shape (2048,)
     phi0L=np.zeros(winSize)
     phi0R=np.zeros(winSize)
     psiL=np.zeros(winSize)
@@ -73,8 +80,8 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     while pIn<pEnd:
         iteration_start = time.perf_counter()
 
-        grainL=audioIn[pIn:pIn+winSize,0]
-        grainR=audioIn[pIn:pIn+winSize,1]
+        grainL=audioIn[pIn:pIn+winSize,0] # Need zero-padding here
+        grainR=audioIn[pIn:pIn+winSize,1] # ^^^
 
         ### Take FFT
         frameFftL=np.fft.fft(grainL*win1)
@@ -96,7 +103,7 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
         ### Synthesize time-scaled grain
         ftL=(rL*np.exp(1j*psiL))
         ftR=(rR*np.exp(1j*psiR))
-        grainL=np.fft.fftshift(np.real(np.fft.ifft(ftL)))*win2  # why another fft on the ifft?
+        grainL=np.fft.fftshift(np.real(np.fft.ifft(ftL)))*win2
         grainR=np.fft.fftshift(np.real(np.fft.ifft(ftR)))*win2
 
         ### Interpolate Grain
@@ -106,28 +113,21 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
         grain3R=grain2R[ix]*dx1 + grain2R[ix1]*dx
 
         ### Overlap-Add:
-        audioOut[pOut:pOut+lx,0]+=grain3L
-        audioOut[pOut:pOut+lx,1]+=grain3R
+        try:
+            audioOut[pOut:pOut+lx,0]+=grain3L
+            audioOut[pOut:pOut+lx,1]+=grain3R
+        except:
+            a=1
 
-        pIn+=n1
-        pOut+=n2
-        # print(pIn/pEnd)
-        
+        ### Increment Frame
+        pIn+=int(n1*(hopSize/winSize))
+        pOut+=int(n2*(hopSize/winSize))
+
         # Record iteration time
         iteration_end = time.perf_counter()
         process_times.append(iteration_end - iteration_start)
 
-        """
-        There is a significant slow-down somewhere in this loop. 
-        The initial FFT-IFFT without time/pitch logic was much faster.
-        
-        Another approach might want to reuse that structure and shift the 
-        bins before IFFT to do pitch warping and interpolate for stretching 
-        before the FFT begins at all (including the slow-down pitch warp 
-        factor in the FFT-IFFT processing
-        
-        DAFx 7.4.4's Filter-bank approach (sum of sinusoids) is described as a more efficient pitch-shiftinmg algorithm
-        """
+
     
     # Report benchmarking statistics
     if process_times:
@@ -144,9 +144,12 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
 
     ### Normalize and Convert Output Type
     audioOut=audioOut.astype("float32")
+    """
+    Apply anti-aliasing filter here
+    """
     audioOut = audioOut / np.max(np.abs(audioOut))
     ### Write Output
-    wavfile.write(input_path.split(".")[0]+"_"+str(target_key_midi)+".wav",sr,audioOut)
+    wavfile.write(input_path.split(".")[0]+"_Key"+str(target_key_midi)+"_Tempo"+str(target_tempo)+".wav",sr,audioOut)
     return None
 
-pitch_tempo_warp("Luxury.wav",60,120,62,120)
+pitch_tempo_warp("Luxury.wav",60,120,67,120)
