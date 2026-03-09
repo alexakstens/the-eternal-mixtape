@@ -5,22 +5,32 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 {
     juce::ignoreUnused (processorRef);
 
+    uiImage = juce::ImageCache::getFromMemory (BinaryData::eternal_mixtape_UI_V1_1_png,
+                                               BinaryData::eternal_mixtape_UI_V1_1_pngSize);
+
     addAndMakeVisible (inspectButton);
 
-    // this chunk of code instantiates and opens the melatonin inspector
     inspectButton.onClick = [&] {
         if (!inspector)
         {
             inspector = std::make_unique<melatonin::Inspector> (*this);
             inspector->onClose = [this]() { inspector.reset(); };
         }
-
         inspector->setVisible (true);
     };
 
-    // Make sure that before the constructor has finished, you've set the
-    // editor's size to whatever you need it to be.
-    setSize (400, 300);
+    if (uiImage.isValid())
+    {
+        constexpr int maxWidth  = 900;
+        constexpr int maxHeight = 700;
+        auto scale = juce::jmin (1.0f,
+                                 (float) maxWidth  / (float) uiImage.getWidth(),
+                                 (float) maxHeight / (float) uiImage.getHeight());
+        setSize (juce::roundToInt (uiImage.getWidth()  * scale),
+                 juce::roundToInt (uiImage.getHeight() * scale));
+    }
+    else
+        setSize (800, 600);
 }
 
 PluginEditor::~PluginEditor()
@@ -29,20 +39,13 @@ PluginEditor::~PluginEditor()
 
 void PluginEditor::paint (juce::Graphics& g)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
+    g.fillAll (juce::Colours::black);
 
-    auto area = getLocalBounds();
-    g.setColour (juce::Colours::white);
-    g.setFont (16.0f);
-    auto helloWorld = juce::String ("Hello from ") + PRODUCT_NAME_WITHOUT_VERSION + " v" VERSION + " running in " + CMAKE_BUILD_TYPE;
-    g.drawText (helloWorld, area.removeFromTop (150), juce::Justification::centred, false);
+    if (uiImage.isValid())
+        g.drawImage (uiImage, getLocalBounds().toFloat(), juce::RectanglePlacement::stretchToFit);
 }
 
 void PluginEditor::resized()
 {
-    // layout the positions of your child components here
-    auto area = getLocalBounds();
-    area.removeFromBottom(50);
-    inspectButton.setBounds (getLocalBounds().withSizeKeepingCentre(100, 50));
+    inspectButton.setBounds (getWidth() - 80, getHeight() - 30, 75, 25);
 }
