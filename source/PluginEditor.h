@@ -52,5 +52,7 @@ private:
     juce::TextButton randomizeButton { "RANDOMIZE" };
     juce::TextButton recButton { "REC" };
 
+    std::unique_ptr<juce::FileChooser> fileChooser;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };
