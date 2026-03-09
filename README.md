@@ -61,6 +61,10 @@ If the build succeeds, your plugin will appear in the VST3 folder you set above.
 Most DAWs (Reaper, Ableton, Bitwig, etc.) scan that folder automatically — just restart your DAW.
 
 ---
+
+![Placeholder image](<assets/images/eternal mixtape_UI_V1.1.png>)
+
+---
 ## Motivation
 <!-- problem to be solved, why is there a need for this -->
 Creating a remix often requires using musical information such as key signature, tempo and chord changes. 
