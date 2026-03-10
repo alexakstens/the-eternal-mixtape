@@ -1,21 +1,20 @@
 cmake_minimum_required(VERSION 3.28)
-project(localJukebox C) # Changed to C project
+project(localJukebox C)
 
 set(CMAKE_C_STANDARD 11)
 
-# 1. Look for aubio (requires aubio to be installed on system)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(AUBIO REQUIRED aubio)
+pkg_check_modules(FFTW3 REQUIRED fftw3f) # Use the float version (fftw3f)
 
 add_executable(localJukebox
         main.c
         beat_tracker.c
         beat_tracker.h
+        warp.c
+        warp.h
         dr_wav.h
 )
 
-# 2. Include the aubio directories
-target_include_directories(localJukebox PRIVATE ${AUBIO_INCLUDE_DIRS})
-
-# 3. Link aubio and the math library
-target_link_libraries(localJukebox PRIVATE ${AUBIO_LIBRARIES} m)
+target_include_directories(localJukebox PRIVATE ${AUBIO_INCLUDE_DIRS} ${FFTW3_INCLUDE_DIRS})
+target_link_libraries(localJukebox PRIVATE ${AUBIO_LIBRARIES} ${FFTW3_LIBRARIES} m)
