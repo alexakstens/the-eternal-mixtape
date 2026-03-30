@@ -4,6 +4,8 @@ Final project for GT Audio Software Engineering MUSI6106, Spring 2026
 Authors: Alex Akstens, Ryan Baker, Matias Cevallos, Evelyne Li, Marcus Parker
 
 The Eternal Mixtape (TEM) is a audio plugin / app that gives an easy, accessible workflow for quickly creating remixes of songs.
+
+Made using the [Pamplejuce template](https://github.com/sudara/pamplejuce)
 ## Motivation
 <!-- problem to be solved, why is there a need for this -->
 Creating a remix often requires using musical information such as key signature, tempo and chord changes. 
@@ -25,6 +27,14 @@ The interaction flows in this order:
     1) the user uploads audio files of different songs into the application
     2) the application parses the songs using offline audio analysis
     3) the user is presented with a low-complexity user interface that allows them to rearrange the song as they please
+
+## User Experience
+The user experience is designed to be **intuitive, engaging, and empowering**. The core of the application is a visual, block-based timeline where users can creatively arrange their mixtape.
+
+- **Simplified Workflow**: Users import songs, which are automatically analyzed for key, tempo, and structure, and then presented as colored blocks.
+- **Drag-and-Drop Canvas**: The main interaction involves dragging these musical blocks from a library onto a remix timeline to build a new sequence.
+- **Intelligent Assistance**: The application automatically handles complex tasks like tempo and pitch matching, allowing the user to focus on creativity.
+- **Immediate Auditory Feedback**: Changes made on the timeline are heard in real-time, creating a fluid and responsive experience.
 
 ## Plans for implementation:
 <!-- ### flow chart, processing blocks, needed components, potential need for 3rd party libs -->
@@ -66,7 +76,6 @@ The interaction flows in this order:
 - A [fork of this model](https://github.com/sevagh/demucs.onnx) has been designed for C++ implementation by using the [ONNX](https://onnx.ai/) runtime.
 
 
-**Audio Content Analysis**
 **Audio Content Analysis** 
 - To provide structural awareness, the analysis engine implements a multi-pass offline processing pipeline using the Aubio (https://aubio.org/) C library and custom linear algebra routines.
 - **Beat Tracking & Temporal Grid:** A temporal grid is established using a spectral-flux-based onset detection and a dynamic programming beat-tracking algorithm (`aubio_tempo`). This serves as the "atomic unit" for all subsequent structural jumps.
@@ -171,7 +180,3 @@ Professional Mode exposes deeper control while maintaining strict interaction co
 │   (Source)    │   / GLOBAL    │  (Section)    │
 └───────────────┴───────────────┴───────────────┘
 ```
-
-
-
-
