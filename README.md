@@ -6,6 +6,65 @@ Authors: Alex Akstens, Ryan Baker, Matias Cevallos, Evelyne Li, Marcus Parker
 The Eternal Mixtape (TEM) is a audio plugin / app that gives an easy, accessible workflow for quickly creating remixes of songs.
 
 Made using the [Pamplejuce template](https://github.com/sudara/pamplejuce)
+
+---
+
+## Getting Started — Read This First
+
+### Step 1: Clone with submodules
+
+The project uses Git submodules (JUCE, etc.). You **must** clone like this:
+
+```bash
+git clone --recurse-submodules https://github.com/GT-MUSI6106/the-eternal-mixtape.git
+```
+
+Already cloned without submodules? Run this to fix it:
+
+```bash
+git submodule update --init --recursive
+```
+
+You will know something went wrong if the `JUCE/` folder is empty.
+
+---
+
+### Step 2 (Windows only): Set your personal VST3 folder
+
+> **Mac users: skip this step.** The build copies the plugin to `~/Library/Audio/Plug-Ins/VST3` automatically with no extra setup.
+
+On Windows, the build tries to copy the plugin to `C:\Program Files (x86)\Common Files\VST3`.
+That folder requires **admin rights** and the build will **fail with exit code 1** unless you do the following (or just run your IDE in admin mode, your mileage may vary).
+
+**Do this once, then never again:**
+
+1. In the root of the repo, find the file called `CMakeUserPresets.json.example`
+2. Make a copy of it in the same folder and rename the copy to `CMakeUserPresets.json`
+3. Open `CMakeUserPresets.json` and replace `YOUR_USERNAME` with your actual Windows username
+   - Not sure what your username is? Open a terminal and type `echo %USERNAME%`
+   - Example result: `"C:/Users/mparker/AppData/Roaming/VST3"`
+4. Save the file
+5. In VS Code, open the Command Palette (`Ctrl+Shift+P`), search for **CMake: Select Configure Preset**, and select **"Local User Settings"**
+6. Then run **CMake: Configure** (`Ctrl+Shift+P` → "CMake: Configure")
+
+> `CMakeUserPresets.json` is gitignored — it stays on your machine and will never be committed.
+> Every developer sets their own path.
+
+---
+
+### Step 3: Build
+
+- **VS Code:** Press `F7` or click **Build** in the bottom status bar
+- **Terminal:** `cmake --build build --config Debug`
+
+If the build succeeds, your plugin will appear in the VST3 folder you set above.
+Most DAWs (Reaper, Ableton, Bitwig, etc.) scan that folder automatically — just restart your DAW.
+
+---
+
+![Placeholder image](<assets/images/eternal mixtape_UI_V1.1.png>)
+
+---
 ## Motivation
 <!-- problem to be solved, why is there a need for this -->
 Creating a remix often requires using musical information such as key signature, tempo and chord changes. 

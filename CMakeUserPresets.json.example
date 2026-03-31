@@ -1,0 +1,12 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local",
+      "displayName": "Local User Settings",
+      "cacheVariables": {
+        "VST3_COPY_DIR": "C:/Users/YOUR_USERNAME/AppData/Roaming/VST3"
+      }
+    }
+  ]
+}

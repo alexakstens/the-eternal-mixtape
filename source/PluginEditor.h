@@ -20,6 +20,7 @@ private:
     void updateUIForMode();
 
     PluginProcessor& processorRef;
+    juce::Image uiImage;
     std::unique_ptr<melatonin::Inspector> inspector;
     juce::TextButton inspectButton { "Inspect the UI" };
 
