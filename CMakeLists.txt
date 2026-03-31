@@ -51,6 +51,14 @@ project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 # On Github Actions, this is done as a part of actions/checkout
 add_subdirectory(JUCE)
 
+# Each developer can override the VST3 copy directory to avoid needing admin rights.
+# Copy CMakeUserPresets.json.example -> CMakeUserPresets.json and fill in your username.
+# Or pass -DVST3_COPY_DIR="/your/path" at configure time.
+set(VST3_COPY_DIR "" CACHE PATH "Override the VST3 plugin copy directory")
+if(VST3_COPY_DIR)
+    set_property(GLOBAL PROPERTY JUCE_VST3_COPY_DIR "${VST3_COPY_DIR}")
+endif()
+
 # Add CLAP format
 add_subdirectory(modules/clap-juce-extensions EXCLUDE_FROM_ALL)
 

@@ -60,13 +60,14 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     // Transport
     addAndMakeVisible (settingsButton);
     settingsButton.onClick = [this] {
-        juce::FileChooser fc ("Choose folder for exported files",
-                              processorRef.getConfigPath ("export_output_dir"),
-                              "", true);
-        if (fc.browseForDirectory())
-        {
-            processorRef.setConfigPath ("export_output_dir", fc.getResult());
-        }
+        fileChooser = std::make_unique<juce::FileChooser> ("Choose folder for exported files",
+                                                           processorRef.getConfigPath ("export_output_dir"));
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                      | juce::FileBrowserComponent::canSelectDirectories,
+                                  [this] (const juce::FileChooser& fc) {
+                                      if (fc.getResult() != juce::File{})
+                                          processorRef.setConfigPath ("export_output_dir", fc.getResult());
+                                  });
     };
     addAndMakeVisible (loopToggle);
     loopToggle.onClick = [this] { processorRef.setLoopEnabled (loopToggle.getToggleState()); };
@@ -93,11 +94,15 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     recButton.onClick = [this] {
         if (isExpertiseMode_)
         {
-            juce::FileChooser fc ("Save recording",
-                                  processorRef.getConfigPath ("export_output_dir"),
-                                  "*.wav", true);
-            if (fc.browseForFileToSave (true))
-                processorRef.startRecording (fc.getResult());
+            fileChooser = std::make_unique<juce::FileChooser> ("Save recording",
+                                                               processorRef.getConfigPath ("export_output_dir"),
+                                                               "*.wav");
+            fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                          | juce::FileBrowserComponent::canSelectFiles,
+                                      [this] (const juce::FileChooser& fc) {
+                                          if (fc.getResult() != juce::File{})
+                                              processorRef.startRecording (fc.getResult());
+                                      });
         }
         else
         {

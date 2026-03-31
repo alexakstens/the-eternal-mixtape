@@ -13,7 +13,7 @@ _deps
 # It's nice to have the Builds folder exist, to remind us where it is
 Builds/*
 !Builds/.gitkeep
-
+build/*
 # This should never exist
 Install/*
 
@@ -22,6 +22,9 @@ Testing
 
 # IDE config
 .idea
+
+# Personal CMake settings (copy CMakeUserPresets.json.example and rename this)
+CMakeUserPresets.json
 
 # clion cmake builds
 cmake-build-debug
