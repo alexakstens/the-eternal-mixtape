@@ -110,10 +110,59 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         }
     };
 
+    // Stem separation panel
+    formatManager.registerBasicFormats();
+
+    for (auto* e : { &stemInputEditor, &stemModelEditor, &stemOutputEditor })
+        e->setReadOnly (true);
+
+    auto defaultModel = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+        .getChildFile ("MyProjects/MyCppProjects/cmucs/models/htdemucs.onnx");
+    if (defaultModel.existsAsFile())
+        stemModelEditor.setText (defaultModel.getFullPathName());
+
+    for (auto* l : { &stemInputLabel, &stemModelLabel, &stemOutputLabel })
+    {
+        l->setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (l);
+    }
+    for (auto* e : { &stemInputEditor, &stemModelEditor, &stemOutputEditor })
+        addAndMakeVisible (e);
+
+    addAndMakeVisible (stemInputBrowse);
+    addAndMakeVisible (stemModelBrowse);
+    addAndMakeVisible (stemOutputBrowse);
+    stemInputBrowse.onClick  = [this] { browseForStemInput(); };
+    stemModelBrowse.onClick  = [this] { browseForStemModel(); };
+    stemOutputBrowse.onClick = [this] { browseForStemOutput(); };
+
+    addAndMakeVisible (stemProcessButton);
+    addAndMakeVisible (stemCancelButton);
+    stemCancelButton.setEnabled (false);
+    stemProcessButton.onClick = [this] { startStemSeparation(); };
+    stemCancelButton.onClick  = [this] { cancelStemSeparation(); };
+
+    stemCudaToggle.setToggleState (true, juce::dontSendNotification);
+    addAndMakeVisible (stemCudaToggle);
+    addAndMakeVisible (stemProgressBar);
+
+    stemStatusLabel.setText ("Ready", juce::dontSendNotification);
+    stemStatusLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (stemStatusLabel);
+
+    drumsWaveform.setWaveformColour  (juce::Colour (0xffe57373));
+    bassWaveform.setWaveformColour   (juce::Colour (0xff81c784));
+    otherWaveform.setWaveformColour  (juce::Colour (0xffffb74d));
+    vocalsWaveform.setWaveformColour (juce::Colour (0xff4fc3f7));
+    addAndMakeVisible (drumsWaveform);
+    addAndMakeVisible (bassWaveform);
+    addAndMakeVisible (otherWaveform);
+    addAndMakeVisible (vocalsWaveform);
+
     updateUIForMode();
     startTimerHz (10);
 
-    setSize (720, 420);
+    setSize (720, 720);
 }
 
 PluginEditor::~PluginEditor()
@@ -144,6 +193,19 @@ void PluginEditor::timerCallback()
     float level = processorRef.getMasterLevels();
     meterLabel.setText ("VU " + juce::String (juce::jlimit (0, 100, (int) (level * 100))),
                         juce::dontSendNotification);
+
+    // Stem separation progress
+    auto& thread = processorRef.separationThread;
+    stemProgressValue = static_cast<double> (thread.getProgress());
+    stemStatusLabel.setText (thread.getStatusMessage(), juce::dontSendNotification);
+    bool isRunning = thread.isThreadRunning();
+    stemProcessButton.setEnabled (! isRunning);
+    stemCancelButton.setEnabled (isRunning);
+
+    if (thread.getStatus() == SeparationThread::Status::Complete && ! stemsLoaded)
+        loadStemWaveforms();
+
+    repaint();
 }
 
 void PluginEditor::updateUIForMode()
@@ -215,5 +277,169 @@ void PluginEditor::resized()
 
     r.removeFromBottom (8);
 
-    inspectButton.setBounds (r.withSizeKeepingCentre (100, 32));
+    // Stem separation panel (below mixer)
+    r.removeFromTop (10);
+    const int stemLabelW = 60, stemBrowseW = 60, stemRowH = 26, stemGap = 3;
+
+    auto stemRow = r.removeFromTop (stemRowH);
+    stemInputLabel.setBounds (stemRow.removeFromLeft (stemLabelW));
+    stemInputBrowse.setBounds (stemRow.removeFromRight (stemBrowseW));
+    stemInputEditor.setBounds (stemRow);
+    r.removeFromTop (stemGap);
+
+    stemRow = r.removeFromTop (stemRowH);
+    stemModelLabel.setBounds (stemRow.removeFromLeft (stemLabelW));
+    stemModelBrowse.setBounds (stemRow.removeFromRight (stemBrowseW));
+    stemModelEditor.setBounds (stemRow);
+    r.removeFromTop (stemGap);
+
+    stemRow = r.removeFromTop (stemRowH);
+    stemOutputLabel.setBounds (stemRow.removeFromLeft (stemLabelW));
+    stemOutputBrowse.setBounds (stemRow.removeFromRight (stemBrowseW));
+    stemOutputEditor.setBounds (stemRow);
+    r.removeFromTop (stemGap);
+
+    stemRow = r.removeFromTop (28);
+    stemCudaToggle.setBounds (stemRow.removeFromLeft (80));
+    stemRow.removeFromLeft (10);
+    stemProcessButton.setBounds (stemRow.removeFromLeft (80));
+    stemRow.removeFromLeft (6);
+    stemCancelButton.setBounds (stemRow.removeFromLeft (80));
+    r.removeFromTop (stemGap);
+
+    stemProgressBar.setBounds (r.removeFromTop (20));
+    r.removeFromTop (stemGap);
+    stemStatusLabel.setBounds (r.removeFromTop (20));
+    r.removeFromTop (stemGap);
+
+    // 2x2 stem waveform grid
+    int stemH = (r.getHeight() - stemGap - 25) / 2;
+    int halfW  = (r.getWidth() - stemGap) / 2;
+    auto waveTop = r.removeFromTop (stemH);
+    drumsWaveform.setBounds (waveTop.removeFromLeft (halfW));
+    waveTop.removeFromLeft (stemGap);
+    bassWaveform.setBounds (waveTop);
+    r.removeFromTop (stemGap);
+    auto waveBot = r.removeFromTop (stemH);
+    otherWaveform.setBounds (waveBot.removeFromLeft (halfW));
+    waveBot.removeFromLeft (stemGap);
+    vocalsWaveform.setBounds (waveBot);
+
+    inspectButton.setBounds (getLocalBounds().removeFromBottom (25).removeFromRight (90));
+}
+
+//==============================================================================
+// Drag-and-drop
+bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (auto& f : files)
+    {
+        auto ext = juce::File (f).getFileExtension().toLowerCase();
+        if (ext == ".wav" || ext == ".mp3" || ext == ".aiff" || ext == ".flac")
+            return true;
+    }
+    return false;
+}
+
+void PluginEditor::filesDropped (const juce::StringArray& files, int, int)
+{
+    for (auto& f : files)
+    {
+        auto ext = juce::File (f).getFileExtension().toLowerCase();
+        if (ext == ".wav" || ext == ".mp3" || ext == ".aiff" || ext == ".flac")
+        {
+            stemInputEditor.setText (f);
+            auto file = juce::File (f);
+            auto outputDir = file.getParentDirectory()
+                .getChildFile (file.getFileNameWithoutExtension() + "_stems");
+            stemOutputEditor.setText (outputDir.getFullPathName());
+            break;
+        }
+    }
+}
+
+//==============================================================================
+// Stem separation
+void PluginEditor::startStemSeparation()
+{
+    auto inputPath  = stemInputEditor.getText();
+    auto modelPath  = stemModelEditor.getText();
+    auto outputPath = stemOutputEditor.getText();
+
+    if (inputPath.isEmpty() || modelPath.isEmpty() || outputPath.isEmpty())
+    {
+        stemStatusLabel.setText ("Select input, model, and output first.", juce::dontSendNotification);
+        return;
+    }
+
+    stemsLoaded = false;
+    drumsWaveform.clear();
+    bassWaveform.clear();
+    otherWaveform.clear();
+    vocalsWaveform.clear();
+
+    processorRef.requestStemSeparation (juce::File (inputPath),
+                                        juce::File (modelPath),
+                                        juce::File (outputPath),
+                                        stemCudaToggle.getToggleState());
+}
+
+void PluginEditor::cancelStemSeparation()
+{
+    processorRef.separationThread.signalThreadShouldExit();
+    stemStatusLabel.setText ("Cancelling...", juce::dontSendNotification);
+}
+
+void PluginEditor::loadStemWaveforms()
+{
+    auto outputPath = stemOutputEditor.getText();
+    if (outputPath.isEmpty())
+        return;
+    auto dir = juce::File (outputPath);
+    if (dir.getChildFile ("drums.wav").existsAsFile())  drumsWaveform.loadFile  (dir.getChildFile ("drums.wav"));
+    if (dir.getChildFile ("bass.wav").existsAsFile())   bassWaveform.loadFile   (dir.getChildFile ("bass.wav"));
+    if (dir.getChildFile ("other.wav").existsAsFile())  otherWaveform.loadFile  (dir.getChildFile ("other.wav"));
+    if (dir.getChildFile ("vocals.wav").existsAsFile()) vocalsWaveform.loadFile (dir.getChildFile ("vocals.wav"));
+    stemsLoaded = true;
+}
+
+void PluginEditor::browseForStemInput()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Select audio file", juce::File(),
+                                                       "*.wav;*.mp3;*.aiff;*.flac");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (file.existsAsFile())
+            {
+                stemInputEditor.setText (file.getFullPathName());
+                stemOutputEditor.setText (file.getParentDirectory()
+                    .getChildFile (file.getFileNameWithoutExtension() + "_stems").getFullPathName());
+            }
+        });
+}
+
+void PluginEditor::browseForStemModel()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Select ONNX model", juce::File(), "*.onnx");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (file.existsAsFile())
+                stemModelEditor.setText (file.getFullPathName());
+        });
+}
+
+void PluginEditor::browseForStemOutput()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Select output directory", juce::File());
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto dir = fc.getResult();
+            if (dir != juce::File{})
+                stemOutputEditor.setText (dir.getFullPathName());
+        });
 }

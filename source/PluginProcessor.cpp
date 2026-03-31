@@ -19,6 +19,7 @@ PluginProcessor::PluginProcessor()
 
 PluginProcessor::~PluginProcessor()
 {
+    separationThread.stopThread (5000);
 }
 
 //==============================================================================
@@ -411,7 +412,17 @@ void PluginProcessor::startRecording (const juce::File& outputFile)
 //==============================================================================
 std::vector<juce::File> PluginProcessor::getLastStemFiles() const
 {
-    return lastStemFiles_;
+    if (lastStemOutputDir_ == juce::File{})
+        return {};
+    auto stems = { "drums.wav", "bass.wav", "other.wav", "vocals.wav", "guitar.wav", "piano.wav" };
+    std::vector<juce::File> result;
+    for (auto& name : stems)
+    {
+        auto f = lastStemOutputDir_.getChildFile (name);
+        if (f.existsAsFile())
+            result.push_back (f);
+    }
+    return result;
 }
 
 juce::File PluginProcessor::getLastStemOutputDir() const
@@ -421,27 +432,27 @@ juce::File PluginProcessor::getLastStemOutputDir() const
 
 float PluginProcessor::getStemProgress() const
 {
-    return stemProgress_;
+    return separationThread.getProgress();
 }
 
 juce::String PluginProcessor::getStemStatusMessage() const
 {
-    return stemStatusMessage_;
+    return separationThread.getStatusMessage();
 }
 
 juce::String PluginProcessor::getStemErrorMessage() const
 {
-    return stemErrorMessage_;
+    return separationThread.getErrorMessage();
 }
 
 void PluginProcessor::requestStemSeparation (const juce::File& inputFile,
                                              const juce::File& modelFile,
-                                             const juce::File& outputDir)
+                                             const juce::File& outputDir,
+                                             bool useCuda)
 {
-    juce::ignoreUnused (inputFile, modelFile, outputDir);
     lastStemOutputDir_ = outputDir;
-    stemProgress_ = 0.0f;
-    stemStatusMessage_ = "Stub: not implemented";
+    separationThread.configure (inputFile, modelFile, outputDir, useCuda);
+    separationThread.startThread();
 }
 
 //==============================================================================

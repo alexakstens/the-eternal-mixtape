@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <map>
 #include <vector>
+#include "SeparationThread.h"
 
 #if (MSVC)
 #include "ipps.h"
@@ -110,7 +111,8 @@ public:
     juce::String getStemErrorMessage() const;
     void requestStemSeparation (const juce::File& inputFile,
                                 const juce::File& modelFile,
-                                const juce::File& outputDir);
+                                const juce::File& outputDir,
+                                bool useCuda = false);
 
     //==============================================================================
     // UX contract: Analysis (stub: no result yet)
@@ -118,6 +120,9 @@ public:
     void runAnalysisAsync (const juce::File& file);
     float getAnalysisProgress() const;
     juce::String getLastAnalysisErrorMessage() const;
+
+    // Accessible from the editor for progress polling
+    SeparationThread separationThread;
 
 private:
     void initDefaultConfigPaths();
@@ -143,11 +148,7 @@ private:
     TrackState trackState_[kNumTracks];
     double globalBPM_ = 120.0;
     float spliceDensity_ = 0.5f;
-    std::vector<juce::File> lastStemFiles_;
     juce::File lastStemOutputDir_;
-    float stemProgress_ = 0.0f;
-    juce::String stemStatusMessage_;
-    juce::String stemErrorMessage_;
     float analysisProgress_ = 0.0f;
     juce::String lastAnalysisErrorMessage_;
 
