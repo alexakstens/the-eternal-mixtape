@@ -31,3 +31,7 @@ cmake-build-debug
 cmake-build-release
 cmake-build-relwithdebinfo
 packaging/Output/*
+
+# Internal design docs (not pushed; see docs/UX_SUMMARY.md for shareable overview)
+docs/CPP_INTEGRATION_PLAN.md
+docs/UX_INTERFACE_DESIGN.md
