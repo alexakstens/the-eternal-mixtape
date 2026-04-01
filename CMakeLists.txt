@@ -28,37 +28,37 @@ set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded CACHE STRING "" FORCE)
 project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 
 # ============================================================
-# External dependencies: cmucs core, ONNX Runtime, Eigen
+# External dependencies: demucs.onnx, ONNX Runtime, Eigen
 # ============================================================
 
-# Path to the cmucs project (source separation core)
-set(CMUCS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/cmucs" CACHE PATH
-    "Path to the cmucs project root")
+# Path to the demucs.onnx submodule
+set(DEMUCS_ONNX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/demucs.onnx" CACHE PATH
+    "Path to the demucs.onnx submodule root")
 
 # Path to ONNX Runtime GPU package
 set(ONNXRUNTIME_ROOT "C:/Users/ryanb/onnxruntime-win-x64-gpu-1.24.1" CACHE PATH
     "Path to extracted ONNX Runtime GPU package")
 
-# Build cmucs core as a static library (dsp + demucs, no CLI audio I/O)
-add_library(cmucs_core STATIC
-    "${CMUCS_ROOT}/src/dsp.cpp"
-    "${CMUCS_ROOT}/src/demucs.cpp"
-    "${CMUCS_ROOT}/src/audio_io.cpp"
-)
-target_include_directories(cmucs_core PUBLIC
-    "${CMUCS_ROOT}/src"
-    "${CMUCS_ROOT}/external/eigen-3.4.0"
-    "${CMUCS_ROOT}/external"
+# ORT include shim: demucs.onnx uses <onnxruntime/core/session/...> paths but
+# the pre-built Windows package places headers at a flat level.
+set(ORT_COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source/ort-compat")
+
+# Build demucs.onnx inference core as a static library (no CLI, no embedded models)
+file(GLOB DEMUCS_ONNX_SOURCES "${DEMUCS_ONNX_ROOT}/src/*.cpp")
+add_library(demucs_onnx_core STATIC ${DEMUCS_ONNX_SOURCES})
+target_include_directories(demucs_onnx_core PUBLIC
+    "${DEMUCS_ONNX_ROOT}/src"
+    "${DEMUCS_ONNX_ROOT}/vendor/eigen"
     "${ONNXRUNTIME_ROOT}/include"
+    "${ORT_COMPAT_DIR}"
 )
-target_link_directories(cmucs_core PUBLIC "${ONNXRUNTIME_ROOT}/lib")
-target_link_libraries(cmucs_core PUBLIC onnxruntime)
-target_compile_features(cmucs_core PUBLIC cxx_std_17)
+target_link_directories(demucs_onnx_core PUBLIC "${ONNXRUNTIME_ROOT}/lib")
+target_link_libraries(demucs_onnx_core PUBLIC onnxruntime)
+target_compile_features(demucs_onnx_core PUBLIC cxx_std_20)
 
 if (MSVC)
-    target_compile_definitions(cmucs_core PUBLIC NOMINMAX _USE_MATH_DEFINES)
-    # Suppress Eigen warnings in MSVC
-    target_compile_options(cmucs_core PRIVATE /W3 /wd4554)
+    target_compile_definitions(demucs_onnx_core PUBLIC NOMINMAX _USE_MATH_DEFINES)
+    target_compile_options(demucs_onnx_core PRIVATE /W3 /wd4554 /wd4267 /wd4244)
 endif()
 
 # ============================================================
@@ -130,7 +130,7 @@ target_compile_definitions(SharedCode
 target_link_libraries(SharedCode
     INTERFACE
     Assets
-    cmucs_core
+    demucs_onnx_core
     melatonin_inspector
     juce_audio_utils
     juce_audio_processors

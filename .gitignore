@@ -15,6 +15,7 @@ Builds/*
 !Builds/.gitkeep
 build/*
 !build/.gitkeep
+build2/*
 
 # This should never exist
 Install/*

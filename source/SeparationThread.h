@@ -6,6 +6,7 @@
 #include "AudioConversion.h"
 #include "demucs.hpp"
 #include <atomic>
+#include <fstream>
 #include <functional>
 
 class SeparationThread : public juce::Thread
@@ -54,9 +55,9 @@ public:
 
         try
         {
-            // 1. Load ONNX model
+            // 1. Load ONNX model from file into memory, then pass to demucs.onnx
             statusMessage = "Loading model...";
-            cmucs::DemucsModel model;
+            demucsonnx::demucs_model model;
 
             Ort::SessionOptions opts;
             opts.SetGraphOptimizationLevel (GraphOptimizationLevel::ORT_ENABLE_ALL);
@@ -85,11 +86,24 @@ public:
 
             if (threadShouldExit()) return;
 
-            if (! cmucs::load_model (modelFile.getFullPathName().toStdString(), model, opts))
             {
-                errorMessage = "Failed to load model: " + modelFile.getFileName();
-                status.store (Status::Error);
-                return;
+                std::ifstream f (modelFile.getFullPathName().toStdString(),
+                                 std::ios::binary);
+                if (! f)
+                {
+                    errorMessage = "Failed to open model: " + modelFile.getFileName();
+                    status.store (Status::Error);
+                    return;
+                }
+                std::vector<char> modelData ((std::istreambuf_iterator<char> (f)),
+                                              std::istreambuf_iterator<char>());
+
+                if (! demucsonnx::load_model (modelData, model, opts))
+                {
+                    errorMessage = "Failed to load model: " + modelFile.getFileName();
+                    status.store (Status::Error);
+                    return;
+                }
             }
 
             if (threadShouldExit()) return;
@@ -120,13 +134,13 @@ public:
             reader.reset();
 
             // 3. Resample if necessary
-            if (static_cast<int> (sourceSampleRate) != cmucs::SUPPORTED_SAMPLE_RATE)
+            if (static_cast<int> (sourceSampleRate) != demucsonnx::SUPPORTED_SAMPLE_RATE)
             {
                 status.store (Status::Resampling);
                 statusMessage = "Resampling from " + juce::String (static_cast<int> (sourceSampleRate))
                     + " Hz to 44100 Hz...";
 
-                double ratio = sourceSampleRate / static_cast<double> (cmucs::SUPPORTED_SAMPLE_RATE);
+                double ratio = sourceSampleRate / static_cast<double> (demucsonnx::SUPPORTED_SAMPLE_RATE);
                 int newNumSamples = static_cast<int> (std::ceil (numSamples / ratio));
 
                 juce::AudioBuffer<float> resampledBuffer (numChannels, newNumSamples);
@@ -155,29 +169,28 @@ public:
             status.store (Status::Processing);
             processingStartTime = juce::Time::getMillisecondCounterHiRes();
 
-            auto result = cmucs::inference (model, eigenAudio,
-                [this] (float p, const std::string& msg) -> bool
+            // demucs.onnx callback returns void; check cancellation after inference
+            auto result = demucsonnx::demucs_inference (model, eigenAudio,
+                [this] (float p, const std::string& msg)
                 {
                     progress.store (p);
                     statusMessage = juce::String (msg);
                     updateETA (p);
-                    return ! threadShouldExit();
                 });
 
             if (threadShouldExit())
             {
                 statusMessage = "Cancelled.";
                 status.store (Status::Idle);
-                model.session.reset();
+                model.sess.reset();
                 return;
             }
 
-            // Check if inference returned an empty result (cancelled internally)
             if (result.size() == 0)
             {
                 statusMessage = "Cancelled.";
                 status.store (Status::Idle);
-                model.session.reset();
+                model.sess.reset();
                 return;
             }
 
@@ -221,7 +234,7 @@ public:
             }
 
             // 6. Explicitly release session to avoid CUDA cleanup crash
-            model.session.reset();
+            model.sess.reset();
 
             auto elapsed = (juce::Time::getMillisecondCounterHiRes() - startTime) / 1000.0;
             statusMessage = "Complete! (" + juce::String (elapsed, 1) + "s total)";
@@ -259,7 +272,7 @@ private:
 
     void updateETA (float p)
     {
-        if (p < 0.05f) return; // not enough data for a good estimate
+        if (p < 0.05f) return;
 
         double elapsed = (juce::Time::getMillisecondCounterHiRes() - processingStartTime) / 1000.0;
         double totalEstimate = elapsed / static_cast<double> (p);
