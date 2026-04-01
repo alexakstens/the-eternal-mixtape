@@ -32,7 +32,7 @@ project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 # ============================================================
 
 # Path to the cmucs project (source separation core)
-set(CMUCS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../MyC++Projects/cmucs" CACHE PATH
+set(CMUCS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/cmucs" CACHE PATH
     "Path to the cmucs project root")
 
 # Path to ONNX Runtime GPU package
