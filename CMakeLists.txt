@@ -13,10 +13,10 @@ include(PamplejuceMacOS)
 # Couple tweaks that IMO should be JUCE defaults
 include(JUCEDefaults)
 
-set(PROJECT_NAME "DemucsGUI")
-set(PRODUCT_NAME "Demucs Source Separator")
-set(COMPANY_NAME "cmucs")
-set(BUNDLE_ID "com.cmucs.demucsgui")
+set(PROJECT_NAME "TheEternalMixtape")
+set(PRODUCT_NAME "The Eternal Mixtape")
+set(COMPANY_NAME "GT MUSI6106")
+set(BUNDLE_ID "com.gtmusi6106.theeternalmixtape")
 
 # Only Standalone — this is an offline processor, not a real-time plugin
 set(FORMATS Standalone)
@@ -123,7 +123,7 @@ target_compile_definitions(SharedCode
     JUCE_VST3_CAN_REPLACE_VST2=0
     CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
     VERSION="${CURRENT_VERSION}"
-    PRODUCT_NAME_WITHOUT_VERSION="DemucsGUI"
+    PRODUCT_NAME_WITHOUT_VERSION="TheEternalMixtape"
 )
 
 # Link JUCE modules + cmucs_core to SharedCode
