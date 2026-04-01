@@ -16,7 +16,7 @@ Made using the [Pamplejuce template](https://github.com/sudara/pamplejuce)
 The project uses Git submodules (JUCE, etc.). You **must** clone like this:
 
 ```bash
-git clone --recurse-submodules https://github.com/GT-MUSI6106/the-eternal-mixtape.git
+git clone --recurse-submodules https://github.com/alexakstens/the-eternal-mixtape.git
 ```
 
 Already cloned without submodules? Run this to fix it:
