@@ -136,7 +136,7 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
         prev_energy = curr_energy
 
         # Take FFT
-        fftL = np.fft.fft(grainL_raw, n=nFFT) # no double windowing
+        fftL = np.fft.fft(grainL_raw, n=nFFT) #  no double windowing
         fftR = np.fft.fft(grainR_raw, n=nFFT)
         rL, phiL = np.abs(fftL), np.angle(fftL)
         rR, phiR = np.abs(fftR), np.angle(fftR)
@@ -163,8 +163,8 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
         resL_raw = np.real(np.fft.ifft(rL * np.exp(1j * psiL), n=nFFT))[:winSize]
         resR_raw = np.real(np.fft.ifft(rR * np.exp(1j * psiR), n=nFFT))[:winSize]
 
-        g3L = (resL_raw[ix] + dx * (resL_raw[ix1] - resL_raw[ix])) * winResamp
-        g3R = (resR_raw[ix] + dx * (resR_raw[ix1] - resR_raw[ix])) * winResamp
+        g3L = (resL_raw[ix] + dx * (resL_raw[ix1] - resL_raw[ix])) * winResamp**0.125 # Gentler window for better tremolo/distortion balance
+        g3R = (resR_raw[ix] + dx * (resR_raw[ix1] - resR_raw[ix])) * winResamp**0.125
 
         # Overlap-Add:
         endIdx= pOut + lx
@@ -207,4 +207,4 @@ def pitch_tempo_warp(input_path, input_key_midi, input_tempo, target_key_midi, t
     wavfile.write(input_path.split(".")[0]+"_Key"+str(target_key_midi)+"_Tempo"+str(target_tempo)+".wav",sr,audioOut)
     return None
 
-pitch_tempo_warp("Luxury.wav",60,120,58,100)
+pitch_tempo_warp("Luxury.wav",60,120,63,100)
