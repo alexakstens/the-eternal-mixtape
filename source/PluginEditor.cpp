@@ -610,12 +610,13 @@ void PluginEditor::startSpliceRemix()
 
 void PluginEditor::loadSpliceOutputWaveform()
 {
-    auto outputFile = processorRef.spliceThread.getOutputFile();
-    if (outputFile.existsAsFile())
-    {
-        spliceOutputWaveform.loadFile (outputFile);
-        processorRef.loadSpliceOutput (outputFile);
-        splicePlayBtn.setToggleState (false, juce::dontSendNotification);
-    }
+    auto stemsDir   = processorRef.getLastStemOutputDir();
+    auto mixedFile  = processorRef.spliceThread.getMixedOutputFile();
+
+    if (mixedFile.existsAsFile())
+        spliceOutputWaveform.loadFile (mixedFile);
+
+    processorRef.loadSpliceOutput (stemsDir);
+    splicePlayBtn.setToggleState (false, juce::dontSendNotification);
     spliceLoaded = true;
 }

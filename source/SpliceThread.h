@@ -13,18 +13,16 @@
 /**
  * Beat-aware remix engine.
  *
- * Algorithm:
- *   1. Read all available stems
- *   2. Auto-detect BPM + beat grid from the drums stem (SongAnalyzer)
- *   3. Slice all stems into per-beat chunks at the detected grid
- *   4. Optionally shuffle the chunk order (density controls shuffle intensity)
- *   5. Resize each chunk to the target beat length (linear-interp resampler)
- *      unless skipWarp is true (concatenate at original length)
- *   6. Apply short crossfades at chunk boundaries to avoid clicks
- *   7. Mix all stems and write splice_output.wav
+ * Output files written to stemsDir/:
+ *   splice_stem_0.wav  drums  (Track A)
+ *   splice_stem_1.wav  bass   (Track B)
+ *   splice_stem_2.wav  other  (Track C)
+ *   splice_stem_3.wav  vocals (Track D)
+ *   splice_output.wav  mixed preview (for waveform display)
  *
- * The result is a tempo-corrected, re-arranged mix that actually sounds different
- * from the original — not just the stems summed back together.
+ * Per-stem files allow the Processor to apply track gains in real-time
+ * without re-running the splice.  All stems are normalized by the same
+ * global peak so relative levels are preserved.
  */
 class SpliceThread : public juce::Thread
 {
@@ -35,7 +33,7 @@ public:
     ~SpliceThread() override { stopThread (10000); }
 
     void configure (const juce::File& stemsDirectory,
-                    double sourceBPM,      // 0.0 = auto-detect
+                    double sourceBPM,
                     double targetBPM,
                     bool   skipTimeWarp = false,
                     float  density      = 0.5f)
@@ -47,10 +45,14 @@ public:
         density_ = juce::jlimit (0.0f, 1.0f, density);
     }
 
-    juce::File getOutputFile() const
+    juce::File getMixedOutputFile() const { return stemsDir.getChildFile ("splice_output.wav"); }
+    juce::File getStemOutputFile (int i)  const
     {
-        return stemsDir.getChildFile ("splice_output.wav");
+        return stemsDir.getChildFile ("splice_stem_" + juce::String (i) + ".wav");
     }
+
+    // Legacy accessor kept for callers that only care about the mixed preview
+    juce::File getOutputFile() const { return getMixedOutputFile(); }
 
     //==========================================================================
     void run() override
@@ -67,7 +69,7 @@ public:
                                             "other.wav", "vocals.wav" };
         using StemChannels = std::vector<std::vector<float>>;
         std::vector<StemChannels> allStems;
-        int sampleRate = 44100;
+        int sampleRate   = 44100;
         int totalSamples = 0;
 
         for (auto& name : stemNames)
@@ -92,9 +94,8 @@ public:
             for (int c = 0; c < numCh; ++c)
                 channels.push_back ({ buf.getReadPointer (c),
                                       buf.getReadPointer (c) + numSmp });
-            // Ensure stereo
-            if (channels.size() == 1)
-                channels.push_back (channels[0]);
+            if ((int) channels.size() == 1)
+                channels.push_back (channels[0]);   // mono → stereo
             allStems.push_back (std::move (channels));
         }
 
@@ -107,44 +108,40 @@ public:
 
         progress.store (0.15f);
 
-        // ── 2. Detect beats from drums stem (index 0, channel 0) ─────────────
+        // ── 2. Detect beats ──────────────────────────────────────────────────
         status.store (Status::Analyzing);
-        const auto& drumsChannel = allStems[0][0];
 
         detectedSrcBPM = (srcBPM > 0.0) ? srcBPM : 120.0;
         std::vector<unsigned int> beatSamples;
 
         if (srcBPM <= 0.0)
         {
-            auto analysis = remixing::SongAnalyzer::analyze (drumsChannel, sampleRate);
+            auto analysis = remixing::SongAnalyzer::analyze (allStems[0][0], sampleRate);
             if (analysis.bpm > 40.0 && analysis.bpm < 300.0)
                 detectedSrcBPM = (double) analysis.bpm;
             beatSamples = analysis.beatSamples;
         }
 
-        // Fall back to evenly-spaced synthetic grid if detection missed
-        if (beatSamples.size() < 2)
+        if ((int) beatSamples.size() < 2)
         {
             int beatLen = (int) (sampleRate * 60.0 / detectedSrcBPM);
             for (int s = 0; s + beatLen <= totalSamples; s += beatLen)
                 beatSamples.push_back ((unsigned int) s);
         }
 
-        const int numBeats = (int) beatSamples.size();
-        progress.store (0.30f);
-
-        // ── 3. Compute target beat length and shuffle permutation ─────────────
-        status.store (Status::Chopping);
+        const int numBeats      = (int) beatSamples.size();
         const int targetBeatLen = (int) (sampleRate * 60.0 / tgtBPM);
         const int xfadeLen      = std::min (256, targetBeatLen / 8);
 
-        // Build shuffle permutation — density 0 = original order, 1 = random
+        progress.store (0.30f);
+
+        // ── 3. Build shuffle permutation (density 0=none, 1=full random) ─────
         std::vector<int> perm (numBeats);
         std::iota (perm.begin(), perm.end(), 0);
 
         if (density_ > 0.0f && numBeats > 1)
         {
-            std::mt19937 rng (42); // deterministic seed for repeatability
+            std::mt19937 rng (42);
             std::vector<int> shuffled (perm);
             std::shuffle (shuffled.begin(), shuffled.end(), rng);
 
@@ -154,11 +151,19 @@ public:
                     perm[i] = shuffled[i];
         }
 
-        // ── 4. Chop, resize, mix ──────────────────────────────────────────────
-        const int outLen   = numBeats * (skipWarp ? 0 : targetBeatLen); // rough estimate
-        const int reserve  = skipWarp ? totalSamples + 4096 : numBeats * targetBeatLen + 4096;
+        // ── 4. Chop each stem into beat chunks and resize ────────────────────
+        status.store (Status::Chopping);
 
-        std::vector<std::vector<float>> mixed (2, std::vector<float> (reserve, 0.0f));
+        const int numStems  = (int) allStems.size();
+        const int chunkLen  = skipWarp ? 0 : targetBeatLen; // 0 = variable
+        const int reserveN  = skipWarp ? totalSamples + 4096 : numBeats * targetBeatLen + 4096;
+
+        // Per-stem stereo output: stemOut[stem][channel]
+        std::vector<std::array<std::vector<float>, 2>> stemOut (numStems);
+        for (auto& s : stemOut)
+            for (auto& ch : s)
+                ch.assign (reserveN, 0.0f);
+
         int writePos = 0;
 
         for (int outBeat = 0; outBeat < numBeats; ++outBeat)
@@ -173,107 +178,143 @@ public:
             const int srcLen   = srcEnd - srcStart;
             if (srcLen <= 0) continue;
 
-            const int chunkLen = skipWarp ? srcLen : targetBeatLen;
+            const int outChunkLen = skipWarp ? srcLen : targetBeatLen;
 
-            // Ensure output buffer is large enough
-            if (writePos + chunkLen > (int) mixed[0].size())
-            {
-                mixed[0].resize (writePos + chunkLen + 44100, 0.0f);
-                mixed[1].resize (mixed[0].size(), 0.0f);
-            }
+            // Grow output buffers if needed
+            if (writePos + outChunkLen > reserveN)
+                for (auto& s : stemOut)
+                    for (auto& ch : s)
+                        ch.resize (writePos + outChunkLen + 44100, 0.0f);
 
-            for (auto& stemCh : allStems)
+            for (int si = 0; si < numStems; ++si)
             {
+                auto& stemCh = allStems[si];
                 for (int c = 0; c < 2; ++c)
                 {
                     const auto& src = stemCh[c < (int) stemCh.size() ? c : 0];
 
                     if (skipWarp)
                     {
-                        // No resampling — copy as-is
-                        for (int i = 0; i < chunkLen; ++i)
+                        for (int i = 0; i < outChunkLen; ++i)
                         {
-                            int si = srcStart + i;
-                            mixed[c][writePos + i] += (si < (int) src.size()) ? src[si] : 0.0f;
+                            int si2 = srcStart + i;
+                            stemOut[si][c][writePos + i] =
+                                (si2 < (int) src.size()) ? src[si2] : 0.0f;
                         }
                     }
                     else
                     {
-                        // Linear-interpolation resample to targetBeatLen
                         const double ratio = (double)(srcLen - 1) / std::max (1, targetBeatLen - 1);
                         for (int i = 0; i < targetBeatLen; ++i)
                         {
-                            const double pos = srcStart + i * ratio;
-                            const int    lo  = (int) pos;
-                            const int    hi  = std::min (lo + 1, (int) src.size() - 1);
-                            const float  t   = (float)(pos - lo);
+                            const double pos  = srcStart + i * ratio;
+                            const int    lo   = (int) pos;
+                            const int    hi   = std::min (lo + 1, (int) src.size() - 1);
+                            const float  t    = (float)(pos - lo);
                             const float  lo_v = (lo < (int) src.size()) ? src[lo] : 0.0f;
                             const float  hi_v = (hi < (int) src.size()) ? src[hi] : 0.0f;
-                            mixed[c][writePos + i] += lo_v * (1.0f - t) + hi_v * t;
+                            stemOut[si][c][writePos + i] = lo_v * (1.0f - t) + hi_v * t;
                         }
                     }
                 }
             }
 
-            // Crossfade at the start of each chunk to avoid clicks
+            // Fade-in at chunk boundary to eliminate clicks
             if (outBeat > 0 && xfadeLen > 0 && writePos >= xfadeLen)
-            {
-                for (int c = 0; c < 2; ++c)
-                    for (int i = 0; i < xfadeLen; ++i)
-                    {
-                        float t = (float) i / xfadeLen;
-                        mixed[c][writePos + i] *= t; // fade in current chunk
-                    }
-            }
+                for (auto& s : stemOut)
+                    for (auto& ch : s)
+                        for (int i = 0; i < xfadeLen; ++i)
+                            ch[writePos + i] *= (float) i / xfadeLen;
 
-            writePos += chunkLen;
-            progress.store (0.30f + 0.55f * (float)(outBeat + 1) / numBeats);
+            writePos += outChunkLen;
+            progress.store (0.30f + 0.50f * (float)(outBeat + 1) / numBeats);
         }
 
-        // Trim to actual written length and normalize
-        for (auto& ch : mixed)
-            ch.resize (writePos);
+        // Trim all stem outputs to writePos
+        for (auto& s : stemOut)
+            for (auto& ch : s)
+                ch.resize (writePos);
 
-        float peak = 0.0f;
-        for (auto& ch : mixed)
-            for (auto s : ch) peak = std::max (peak, std::abs (s));
-        if (peak > 1e-6f)
-            for (auto& ch : mixed)
-                for (auto& s : ch) s /= peak;
+        // ── 5. Normalize by shared global peak ───────────────────────────────
+        float globalPeak = 1e-6f;
+        for (auto& s : stemOut)
+            for (auto& ch : s)
+                for (auto v : ch)
+                    globalPeak = std::max (globalPeak, std::abs (v));
+
+        const float normScale = 1.0f / globalPeak;
+        for (auto& s : stemOut)
+            for (auto& ch : s)
+                for (auto& v : ch)
+                    v *= normScale;
 
         if (threadShouldExit()) return;
 
-        // ── 5. Write output ───────────────────────────────────────────────────
+        // ── 6. Write per-stem WAVs + mixed preview ───────────────────────────
         status.store (Status::Writing);
 
-        auto outputFile = getOutputFile();
-        outputFile.deleteFile();
-
-        auto outStream = outputFile.createOutputStream();
-        if (! outStream) { errorMessage = "Could not create output file."; status.store (Status::Error); return; }
-
         juce::WavAudioFormat wavFmt;
-        auto writer = std::unique_ptr<juce::AudioFormatWriter> (
-            wavFmt.createWriterFor (outStream.release(), sampleRate, 2, 16, {}, 0));
 
-        if (! writer) { errorMessage = "Could not create WAV writer."; status.store (Status::Error); return; }
+        // Per-stem files (one per track A-D)
+        for (int si = 0; si < numStems; ++si)
+        {
+            auto f = getStemOutputFile (si);
+            f.deleteFile();
 
-        const int outSamples = (int) mixed[0].size();
-        juce::AudioBuffer<float> outBuf (2, outSamples);
-        for (int c = 0; c < 2; ++c)
-            outBuf.copyFrom (c, 0, mixed[c].data(), outSamples);
+            auto stream = f.createOutputStream();
+            if (! stream) continue;
 
-        writer->writeFromAudioSampleBuffer (outBuf, 0, outSamples);
+            auto writer = std::unique_ptr<juce::AudioFormatWriter> (
+                wavFmt.createWriterFor (stream.release(), sampleRate, 2, 16, {}, 0));
+            if (! writer) continue;
+
+            juce::AudioBuffer<float> buf (2, writePos);
+            for (int c = 0; c < 2; ++c)
+                buf.copyFrom (c, 0, stemOut[si][c].data(), writePos);
+            writer->writeFromAudioSampleBuffer (buf, 0, writePos);
+        }
+
+        // Mixed preview (equal-gain sum, re-normalized)
+        {
+            std::vector<float> mixL (writePos, 0.0f), mixR (writePos, 0.0f);
+            for (int si = 0; si < numStems; ++si)
+                for (int i = 0; i < writePos; ++i)
+                {
+                    mixL[i] += stemOut[si][0][i];
+                    mixR[i] += stemOut[si][1][i];
+                }
+            float mixPeak = 1e-6f;
+            for (int i = 0; i < writePos; ++i)
+            {
+                mixPeak = std::max (mixPeak, std::abs (mixL[i]));
+                mixPeak = std::max (mixPeak, std::abs (mixR[i]));
+            }
+            const float ms = 1.0f / mixPeak;
+            for (int i = 0; i < writePos; ++i) { mixL[i] *= ms; mixR[i] *= ms; }
+
+            auto f = getMixedOutputFile();
+            f.deleteFile();
+            auto stream = f.createOutputStream();
+            auto writer = std::unique_ptr<juce::AudioFormatWriter> (
+                wavFmt.createWriterFor (stream.release(), sampleRate, 2, 16, {}, 0));
+            if (writer)
+            {
+                juce::AudioBuffer<float> buf (2, writePos);
+                buf.copyFrom (0, 0, mixL.data(), writePos);
+                buf.copyFrom (1, 0, mixR.data(), writePos);
+                writer->writeFromAudioSampleBuffer (buf, 0, writePos);
+            }
+        }
 
         progress.store (1.0f);
         status.store (Status::Complete);
     }
 
     //==========================================================================
-    float          getProgress()    const { return progress.load(); }
-    Status         getStatus()      const { return status.load(); }
-    juce::String   getErrorMessage() const { return errorMessage; }
-    double         getDetectedBPM() const { return detectedSrcBPM; }
+    float        getProgress()     const { return progress.load(); }
+    Status       getStatus()       const { return status.load(); }
+    juce::String getErrorMessage() const { return errorMessage; }
+    double       getDetectedBPM()  const { return detectedSrcBPM; }
 
     juce::String getStatusMessage() const
     {
@@ -283,9 +324,9 @@ public:
             case Status::Reading:   return "Reading stems...";
             case Status::Analyzing: return "Detecting beats...";
             case Status::Chopping:  return "Chopping at " + juce::String (detectedSrcBPM, 1) + " BPM...";
-            case Status::Writing:   return "Writing splice_output.wav...";
-            case Status::Complete:  return "Complete — " + juce::String (detectedSrcBPM, 1) + " \xe2\x86\x92 "
-                                           + juce::String (tgtBPM, 1) + " BPM";
+            case Status::Writing:   return "Writing output files...";
+            case Status::Complete:  return "Complete — " + juce::String (detectedSrcBPM, 1)
+                                           + " \xe2\x86\x92 " + juce::String (tgtBPM, 1) + " BPM";
             case Status::Error:     return "Error: " + errorMessage;
             default:                return {};
         }

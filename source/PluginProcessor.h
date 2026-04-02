@@ -133,7 +133,7 @@ public:
     //==============================================================================
     // UX contract: Splice output playback
     //==============================================================================
-    void loadSpliceOutput (const juce::File& file);
+    void loadSpliceOutput (const juce::File& outputDir);
     void playSpliceOutput();
     void stopSpliceOutput();
     void rewindSpliceOutput();
@@ -171,11 +171,16 @@ private:
     float analysisProgress_ = 0.0f;
     juce::String lastAnalysisErrorMessage_;
 
-    // Splice output playback
-    juce::SpinLock                                    spliceLock_;
-    juce::AudioFormatManager                          spliceFormatManager_;
-    std::unique_ptr<juce::AudioFormatReaderSource>    spliceReaderSource_;
-    juce::AudioTransportSource                        spliceTransport_;
+    // Splice output playback — 4 per-stem buffers mixed with track gains in processBlock
+    juce::SpinLock spliceLock_;
+    juce::AudioFormatManager spliceFormatManager_;
+    struct SpliceStemBuffer { juce::AudioBuffer<float> audio { 2, 0 }; bool valid = false; };
+    SpliceStemBuffer         spliceStems_[kNumTracks];
+    std::atomic<int64_t>     splicePlayPos_   { 0 };
+    std::atomic<bool>        spliceIsPlaying_ { false };
+    std::atomic<bool>        spliceIsLooping_ { false };
+    int64_t                  spliceTotalSamples_ = 0;
+    int                      spliceSampleRate_   = 44100;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

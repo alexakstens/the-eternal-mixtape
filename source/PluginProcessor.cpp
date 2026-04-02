@@ -13,16 +13,14 @@ PluginProcessor::PluginProcessor()
                        )
 {
     initDefaultConfigPaths();
-    spliceFormatManager_.registerBasicFormats();
+    spliceFormatManager_.registerBasicFormats(); // used in loadSpliceOutput
     for (int i = 0; i < kNumTracks; ++i)
         trackState_[i].name = "Track " + juce::String (char ('A' + i));
 }
 
 PluginProcessor::~PluginProcessor()
 {
-    spliceTransport_.stop();
-    spliceTransport_.setSource (nullptr);
-    spliceReaderSource_.reset();
+    spliceIsPlaying_.store (false);
     separationThread.stopThread (5000);
 }
 
@@ -94,12 +92,11 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 //==============================================================================
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    spliceTransport_.prepareToPlay (samplesPerBlock, sampleRate);
+    juce::ignoreUnused (sampleRate, samplesPerBlock);
 }
 
 void PluginProcessor::releaseResources()
 {
-    spliceTransport_.releaseResources();
 }
 
 bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -155,13 +152,45 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // ..do something to the data...
     }
 
-    // Mix in splice output playback
+    // Mix in splice output playback (per-stem with track gains)
+    if (spliceIsPlaying_.load())
     {
         const juce::SpinLock::ScopedTryLockType tryLock (spliceLock_);
-        if (tryLock.isLocked() && spliceTransport_.isPlaying())
+        if (tryLock.isLocked() && spliceTotalSamples_ > 0)
         {
-            juce::AudioSourceChannelInfo info (&buffer, 0, buffer.getNumSamples());
-            spliceTransport_.getNextAudioBlock (info);
+            const int numOut = buffer.getNumSamples();
+            int64_t pos      = splicePlayPos_.load();
+
+            for (int si = 0; si < kNumTracks; ++si)
+            {
+                if (! spliceStems_[si].valid) continue;
+                const float gain = getTrackGain (si);
+                const auto& stemBuf = spliceStems_[si].audio;
+
+                for (int c = 0; c < std::min (2, buffer.getNumChannels()); ++c)
+                {
+                    auto* out = buffer.getWritePointer (c);
+                    for (int n = 0; n < numOut; ++n)
+                    {
+                        int64_t spos = pos + n;
+                        if (spos < stemBuf.getNumSamples())
+                            out[n] += gain * stemBuf.getSample (c, (int) spos);
+                    }
+                }
+            }
+
+            int64_t newPos = pos + numOut;
+            if (newPos >= spliceTotalSamples_)
+            {
+                if (spliceIsLooping_.load())
+                    newPos = newPos % spliceTotalSamples_;
+                else
+                {
+                    newPos = spliceTotalSamples_;
+                    spliceIsPlaying_.store (false);
+                }
+            }
+            splicePlayPos_.store (newPos);
         }
     }
 
@@ -500,64 +529,93 @@ juce::String PluginProcessor::getLastAnalysisErrorMessage() const
 //==============================================================================
 // UX contract: Splice output playback
 //==============================================================================
-void PluginProcessor::loadSpliceOutput (const juce::File& file)
+void PluginProcessor::loadSpliceOutput (const juce::File& outputDir)
 {
-    // Stop first — audio thread will see isPlaying()==false before setSource runs
-    spliceTransport_.stop();
+    spliceIsPlaying_.store (false);
 
     const juce::SpinLock::ScopedLockType sl (spliceLock_);
-    spliceTransport_.setSource (nullptr);
-    spliceReaderSource_.reset();
 
-    if (file.existsAsFile())
+    for (int i = 0; i < kNumTracks; ++i)
+        spliceStems_[i].valid = false;
+
+    spliceTotalSamples_ = 0;
+    splicePlayPos_.store (0);
+
+    if (! outputDir.isDirectory())
+        return;
+
+    juce::AudioFormatManager fmt;
+    fmt.registerBasicFormats();
+
+    int64_t maxLen = 0;
+    for (int i = 0; i < kNumTracks; ++i)
     {
-        if (auto* reader = spliceFormatManager_.createReaderFor (file))
-        {
-            spliceReaderSource_ = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
-            spliceTransport_.setSource (spliceReaderSource_.get(), 0, nullptr, reader->sampleRate);
-        }
+        auto f = outputDir.getChildFile ("splice_stem_" + juce::String (i) + ".wav");
+        if (! f.existsAsFile()) continue;
+
+        std::unique_ptr<juce::AudioFormatReader> reader (fmt.createReaderFor (f));
+        if (! reader) continue;
+
+        spliceSampleRate_ = (int) reader->sampleRate;
+        const int numSmp  = (int) reader->lengthInSamples;
+        const int numCh   = std::min (2, (int) reader->numChannels);
+
+        spliceStems_[i].audio.setSize (2, numSmp, false, true, false);
+        reader->read (&spliceStems_[i].audio, 0, numSmp, 0, true, numCh > 1);
+
+        // If mono source, copy L→R
+        if (numCh == 1)
+            spliceStems_[i].audio.copyFrom (1, 0, spliceStems_[i].audio, 0, 0, numSmp);
+
+        spliceStems_[i].valid = true;
+        maxLen = std::max (maxLen, (int64_t) numSmp);
     }
+
+    spliceTotalSamples_ = maxLen;
 }
 
 void PluginProcessor::playSpliceOutput()
 {
-    spliceTransport_.start();
+    if (spliceTotalSamples_ > 0)
+        spliceIsPlaying_.store (true);
 }
 
 void PluginProcessor::stopSpliceOutput()
 {
-    spliceTransport_.stop();
+    spliceIsPlaying_.store (false);
 }
 
 void PluginProcessor::rewindSpliceOutput()
 {
-    spliceTransport_.setPosition (0.0);
+    splicePlayPos_.store (0);
 }
 
 void PluginProcessor::seekSpliceOutput (double positionSeconds)
 {
-    spliceTransport_.setPosition (positionSeconds);
+    int64_t pos = (int64_t) (positionSeconds * spliceSampleRate_);
+    splicePlayPos_.store (juce::jlimit ((int64_t) 0, spliceTotalSamples_, pos));
 }
 
 void PluginProcessor::setSpliceOutputLoop (bool loop)
 {
-    spliceTransport_.setLooping (loop);
+    spliceIsLooping_.store (loop);
 }
 
 bool PluginProcessor::isSpliceOutputPlaying() const
 {
-    return spliceTransport_.isPlaying();
+    return spliceIsPlaying_.load();
 }
 
 double PluginProcessor::getSpliceOutputPositionRatio() const
 {
-    double len = spliceTransport_.getLengthInSeconds();
-    return len > 0.0 ? spliceTransport_.getCurrentPosition() / len : 0.0;
+    if (spliceTotalSamples_ <= 0) return 0.0;
+    return (double) splicePlayPos_.load() / (double) spliceTotalSamples_;
 }
 
 double PluginProcessor::getSpliceOutputLengthSeconds() const
 {
-    return spliceTransport_.getLengthInSeconds();
+    if (spliceSampleRate_ <= 0) return 0.0;
+    return (double) spliceTotalSamples_ / (double) spliceSampleRate_;
 }
 
 //==============================================================================
