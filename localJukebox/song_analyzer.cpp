@@ -86,7 +86,6 @@ bool SongData::analyze_song(const std::string& filename) {
     float* pSampleData = drwav_open_file_and_read_pcm_frames_f32(filename.c_str(), &channels, &sample_rate, &total_frames, nullptr);
     if (!pSampleData) return false;
 
-    // Move data into C++ vector and free C pointer
     audio_data.assign(pSampleData, pSampleData + total_frames * channels);
     drwav_free(pSampleData, nullptr);
 
