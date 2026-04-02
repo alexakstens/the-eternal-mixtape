@@ -50,7 +50,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (meterLabel);
 
     // Tracks
-    const char* trackNames[] = { "TRACK A", "TRACK B", "TRACK C", "TRACK D" };
+    const char* trackNames[] = { "A: DRUMS", "B: BASS", "C: OTHER", "D: VOCALS" };
     for (int i = 0; i < kNumTracks; ++i)
     {
         trackLabels[i].setText (trackNames[i], juce::dontSendNotification);
@@ -374,7 +374,7 @@ void PluginEditor::resized()
     auto spliceRow = r.removeFromTop (40);
     spliceButton.setBounds (spliceRow.removeFromLeft (40));
     spliceRow.removeFromLeft (6);
-    bpmLabel.setBounds (spliceRow.removeFromLeft (32).reduced (2));
+    bpmLabel.setBounds (spliceRow.removeFromLeft (46).reduced (2));
     bpmSlider.setBounds (spliceRow.removeFromLeft (120).reduced (2));
     densityLabel.setBounds (spliceRow.removeFromLeft (60).reduced (2));
     densitySlider.setBounds (spliceRow.removeFromLeft (140).reduced (2));
