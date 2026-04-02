@@ -31,6 +31,8 @@ private:
     void browseForStemInput();
     void browseForStemModel();
     void browseForStemOutput();
+    void startSpliceRemix();
+    void loadSpliceOutputWaveform();
 
     PluginProcessor& processorRef;
     juce::Image uiImage;
@@ -54,6 +56,13 @@ private:
     juce::Slider densitySlider;
     juce::Label bpmLabel { {}, "BPM" };
     juce::Label densityLabel { {}, "DENSITY" };
+
+    // Splice output waveform (result of time-stretch remix)
+    WaveformDisplay spliceOutputWaveform { formatManager, "Splice Output" };
+    double spliceProgressValue = 0.0;
+    juce::ProgressBar spliceProgressBar { spliceProgressValue };
+    juce::Label spliceStatusLabel;
+    bool spliceLoaded = false;
 
     // Transport
     juce::TextButton settingsButton { "Settings" };

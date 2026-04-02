@@ -385,6 +385,16 @@ double PluginProcessor::getGlobalBPM() const
 //==============================================================================
 // UX contract: Actions
 //==============================================================================
+void PluginProcessor::requestSplice (const juce::File& stemsDir,
+                                     double sourceBPM,
+                                     double targetBPM)
+{
+    if (spliceThread.isThreadRunning())
+        return;
+    spliceThread.configure (stemsDir, sourceBPM, targetBPM);
+    spliceThread.startThread();
+}
+
 void PluginProcessor::applyAutoSplice()
 {
 }

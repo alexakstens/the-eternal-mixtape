@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include "SeparationThread.h"
+#include "SpliceThread.h"
 
 #if (MSVC)
 #include "ipps.h"
@@ -123,6 +124,9 @@ public:
 
     // Accessible from the editor for progress polling
     SeparationThread separationThread;
+    SpliceThread     spliceThread;
+
+    void requestSplice (const juce::File& stemsDir, double sourceBPM, double targetBPM);
 
 private:
     void initDefaultConfigPaths();

@@ -38,10 +38,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     // Splice panel
     addAndMakeVisible (spliceButton);
-    spliceButton.onClick = [this] {
-        for (int t = 0; t < kNumTracks; ++t)
-            processorRef.applySplice (t);
-    };
+    spliceButton.onClick = [this] { startSpliceRemix(); };
     bpmSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     bpmSlider.setTextBoxStyle (juce::Slider::TextBoxRight, true, 50, 20);
     bpmSlider.setRange (20.0, 300.0, 1.0);
@@ -56,6 +53,14 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     densitySlider.onValueChange = [this] { processorRef.setSpliceDensity ((float) densitySlider.getValue()); };
     addAndMakeVisible (densitySlider);
     addAndMakeVisible (densityLabel);
+
+    // Splice output waveform
+    spliceOutputWaveform.setWaveformColour (juce::Colour (0xffa78bfa));
+    addAndMakeVisible (spliceOutputWaveform);
+    spliceStatusLabel.setText ("Separate stems first, then SPLICE", juce::dontSendNotification);
+    spliceStatusLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (spliceStatusLabel);
+    addAndMakeVisible (spliceProgressBar);
 
     // Transport
     addAndMakeVisible (settingsButton);
@@ -169,7 +174,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     updateUIForMode();
     startTimerHz (10);
 
-    setSize (720, 720);
+    setSize (720, 840);
 }
 
 PluginEditor::~PluginEditor()
@@ -211,6 +216,15 @@ void PluginEditor::timerCallback()
 
     if (thread.getStatus() == SeparationThread::Status::Complete && ! stemsLoaded)
         loadStemWaveforms();
+
+    // Splice thread polling
+    auto& sThread = processorRef.spliceThread;
+    spliceProgressValue = static_cast<double> (sThread.getProgress());
+    spliceStatusLabel.setText (sThread.getStatusMessage(), juce::dontSendNotification);
+    spliceButton.setEnabled (! sThread.isThreadRunning());
+
+    if (sThread.getStatus() == SpliceThread::Status::Complete && ! spliceLoaded)
+        loadSpliceOutputWaveform();
 
     repaint();
 }
@@ -269,6 +283,14 @@ void PluginEditor::resized()
     densityLabel.setBounds (spliceRow.removeFromLeft (60).reduced (2));
     densitySlider.setBounds (spliceRow.removeFromLeft (140).reduced (2));
 
+    r.removeFromTop (6);
+
+    // Splice output waveform
+    spliceOutputWaveform.setBounds (r.removeFromTop (70).reduced (0, 2));
+    r.removeFromTop (3);
+    spliceProgressBar.setBounds (r.removeFromTop (16));
+    r.removeFromTop (3);
+    spliceStatusLabel.setBounds (r.removeFromTop (18));
     r.removeFromTop (6);
 
     auto transport = r.removeFromBottom (40);
@@ -449,4 +471,34 @@ void PluginEditor::browseForStemOutput()
             if (dir != juce::File{})
                 stemOutputEditor.setText (dir.getFullPathName());
         });
+}
+
+//==============================================================================
+// Splice remix
+void PluginEditor::startSpliceRemix()
+{
+    auto stemsDir = processorRef.getLastStemOutputDir();
+    if (stemsDir == juce::File{})
+    {
+        spliceStatusLabel.setText ("No stems available — run separation first.",
+                                   juce::dontSendNotification);
+        return;
+    }
+
+    spliceLoaded = false;
+    spliceOutputWaveform.clear();
+
+    // Source BPM defaults to 120 until BeatAnalyzer (aubio) is wired in.
+    const double sourceBPM = 120.0;
+    const double targetBPM = processorRef.getGlobalBPM();
+
+    processorRef.requestSplice (stemsDir, sourceBPM, targetBPM);
+}
+
+void PluginEditor::loadSpliceOutputWaveform()
+{
+    auto outputFile = processorRef.spliceThread.getOutputFile();
+    if (outputFile.existsAsFile())
+        spliceOutputWaveform.loadFile (outputFile);
+    spliceLoaded = true;
 }
