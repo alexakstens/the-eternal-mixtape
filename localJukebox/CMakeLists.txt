@@ -5,12 +5,12 @@ set(CMAKE_C_STANDARD 11)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(AUBIO REQUIRED aubio)
-pkg_check_modules(FFTW3 REQUIRED fftw3f) # Use the float version (fftw3f)
+pkg_check_modules(FFTW3 REQUIRED fftw3f)
 
 add_executable(localJukebox
         main.c
-        beat_tracker.c
-        beat_tracker.h
+        song_analyzer.c
+        song_analyzer.h
         warp.c
         warp.h
         dr_wav.h
