@@ -116,8 +116,15 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     for (auto* e : { &stemInputEditor, &stemModelEditor, &stemOutputEditor })
         e->setReadOnly (true);
 
-    auto defaultModel = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-        .getChildFile ("MyProjects/MyCppProjects/cmucs/models/htdemucs.onnx");
+    // Model path resolution order:
+    // 1. Next to the executable (distribution / installer layout)
+    // 2. demucs.onnx/onnx-models/ inside the source tree (dev build, injected by CMake)
+    const juce::String modelFilename = "htdemucs.onnx";
+    juce::File defaultModel = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
+                                  .getParentDirectory()
+                                  .getChildFile (modelFilename);
+    if (! defaultModel.existsAsFile())
+        defaultModel = juce::File (DEMUCS_ONNX_MODELS_DIR).getChildFile (modelFilename);
     if (defaultModel.existsAsFile())
         stemModelEditor.setText (defaultModel.getFullPathName());
 

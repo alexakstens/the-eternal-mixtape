@@ -62,6 +62,45 @@ if (MSVC)
 endif()
 
 # ============================================================
+# Marcus's C remixing engines (warp.c / beat_tracker.c)
+# These are compiled as separate C static libs due to C99 complex + external deps.
+# ============================================================
+
+# Phase-vocoder pitch+tempo warp engine — requires FFTW3
+option(ENABLE_FFTW3_WARP "Build Marcus's warp engine (requires FFTW3)" OFF)
+if (ENABLE_FFTW3_WARP)
+    add_library(warp_engine STATIC source/remixing/warp.c)
+    target_include_directories(warp_engine PUBLIC source/remixing)
+    target_compile_features(warp_engine PUBLIC c_std_99)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFTW3 REQUIRED fftw3f)
+    target_include_directories(warp_engine PUBLIC ${FFTW3_INCLUDE_DIRS})
+    target_link_directories(warp_engine PUBLIC ${FFTW3_LIBRARY_DIRS})
+    target_link_libraries(warp_engine PUBLIC ${FFTW3_LIBRARIES})
+    target_compile_definitions(warp_engine PUBLIC ENABLE_FFTW3_WARP=1)
+    message(STATUS "Warp engine: ENABLED (FFTW3 found)")
+else()
+    message(STATUS "Warp engine: DISABLED (set ENABLE_FFTW3_WARP=ON to enable)")
+endif()
+
+# Beat tracker — requires aubio
+option(ENABLE_AUBIO_BEAT "Build Marcus's beat tracker (requires aubio)" OFF)
+if (ENABLE_AUBIO_BEAT)
+    add_library(beat_engine STATIC source/remixing/beat_tracker.c)
+    target_include_directories(beat_engine PUBLIC source/remixing)
+    target_compile_features(beat_engine PUBLIC c_std_99)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(AUBIO REQUIRED aubio)
+    target_include_directories(beat_engine PUBLIC ${AUBIO_INCLUDE_DIRS})
+    target_link_directories(beat_engine PUBLIC ${AUBIO_LIBRARY_DIRS})
+    target_link_libraries(beat_engine PUBLIC ${AUBIO_LIBRARIES})
+    target_compile_definitions(beat_engine PUBLIC ENABLE_AUBIO_BEAT=1)
+    message(STATUS "Beat tracker: ENABLED (aubio found)")
+else()
+    message(STATUS "Beat tracker: DISABLED (set ENABLE_AUBIO_BEAT=ON to enable)")
+endif()
+
+# ============================================================
 # JUCE setup
 # ============================================================
 
@@ -109,11 +148,24 @@ file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
 target_sources(SharedCode INTERFACE ${SourceFiles})
 
+# time-stretcher (jatinchowdhury18) — HPSS phase-vocoder, uses juce::dsp::FFT.
+# Sources compiled directly into SharedCode so they inherit JUCE's compilation context.
+target_sources(SharedCode INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/modules/time-stretcher/src/hpss.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/modules/time-stretcher/src/stretch.cpp"
+)
+
 # Adds a BinaryData target for embedding assets into the binary
 include(Assets)
 
 # MacOS only: Cleans up folder and target organization on Xcode.
 include(XcodePrettify)
+
+# Expose remixing headers to all SharedCode consumers
+target_include_directories(SharedCode INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/remixing"
+    "${CMAKE_CURRENT_SOURCE_DIR}/modules/time-stretcher/src"
+)
 
 # Preprocessor definitions
 target_compile_definitions(SharedCode
@@ -124,13 +176,17 @@ target_compile_definitions(SharedCode
     CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
     VERSION="${CURRENT_VERSION}"
     PRODUCT_NAME_WITHOUT_VERSION="TheEternalMixtape"
+    TIMESTRETCH_USING_JUCE=1
+    DEMUCS_ONNX_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/demucs.onnx/onnx-models"
 )
 
-# Link JUCE modules + cmucs_core to SharedCode
+# Link JUCE modules + inference/remixing engines to SharedCode
 target_link_libraries(SharedCode
     INTERFACE
     Assets
     demucs_onnx_core
+    $<$<BOOL:${ENABLE_FFTW3_WARP}>:warp_engine>
+    $<$<BOOL:${ENABLE_AUBIO_BEAT}>:beat_engine>
     melatonin_inspector
     juce_audio_utils
     juce_audio_processors
