@@ -5,6 +5,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "AudioConversion.h"
 #include "demucs.hpp"
+#include <dml_provider_factory.h>
 #include <atomic>
 #include <fstream>
 #include <functional>
@@ -37,12 +38,12 @@ public:
     void configure (const juce::File& inputFile,
                     const juce::File& modelFile,
                     const juce::File& outputDir,
-                    bool useCuda)
+                    bool useDirectML)
     {
         this->inputFile = inputFile;
         this->modelFile = modelFile;
         this->outputDir = outputDir;
-        this->useCuda = useCuda;
+        this->useDirectML = useDirectML;
     }
 
     void run() override
@@ -65,17 +66,13 @@ public:
             opts.SetIntraOpNumThreads (0);
             opts.SetInterOpNumThreads (0);
 
-            if (useCuda)
+            if (useDirectML)
             {
-                OrtCUDAProviderOptions cudaOpts {};
-                cudaOpts.device_id = 0;
-                cudaOpts.arena_extend_strategy = 0;
-                cudaOpts.gpu_mem_limit = SIZE_MAX;
-                cudaOpts.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
-                cudaOpts.do_copy_in_default_stream = 1;
+                // DirectML ships with Windows 10 1903+ — no cuDNN or CUDA required.
+                // Falls back to CPU silently if DirectML is unavailable.
                 try
                 {
-                    opts.AppendExecutionProvider_CUDA (cudaOpts);
+                    Ort::ThrowOnError (OrtSessionOptionsAppendExecutionProvider_DML (opts, 0));
                     gpuEnabled = true;
                 }
                 catch (const Ort::Exception&)
@@ -258,8 +255,8 @@ private:
     juce::File inputFile;
     juce::File modelFile;
     juce::File outputDir;
-    bool useCuda = true;
-    bool gpuEnabled = false;
+    bool useDirectML = true;
+    bool gpuEnabled  = false;
 
     std::atomic<float> progress { 0.0f };
     std::atomic<Status> status { Status::Idle };

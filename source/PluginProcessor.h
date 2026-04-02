@@ -112,7 +112,7 @@ public:
     void requestStemSeparation (const juce::File& inputFile,
                                 const juce::File& modelFile,
                                 const juce::File& outputDir,
-                                bool useCuda = false);
+                                bool useDirectML = true);
 
     //==============================================================================
     // UX contract: Analysis (stub: no result yet)

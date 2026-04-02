@@ -448,10 +448,10 @@ juce::String PluginProcessor::getStemErrorMessage() const
 void PluginProcessor::requestStemSeparation (const juce::File& inputFile,
                                              const juce::File& modelFile,
                                              const juce::File& outputDir,
-                                             bool useCuda)
+                                             bool useDirectML)
 {
     lastStemOutputDir_ = outputDir;
-    separationThread.configure (inputFile, modelFile, outputDir, useCuda);
+    separationThread.configure (inputFile, modelFile, outputDir, useDirectML);
     separationThread.startThread();
 }
 

@@ -35,12 +35,19 @@ project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 set(DEMUCS_ONNX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/demucs.onnx" CACHE PATH
     "Path to the demucs.onnx submodule root")
 
-# Path to ONNX Runtime GPU package
-set(ONNXRUNTIME_ROOT "C:/Users/ryanb/onnxruntime-win-x64-gpu-1.24.1" CACHE PATH
-    "Path to extracted ONNX Runtime GPU package")
+# Path to ONNX Runtime DirectML package (NuGet: Microsoft.ML.OnnxRuntime.DirectML 1.24.1)
+# Redistributable — DirectML itself ships with Windows 10 1903+, no cuDNN required.
+set(ONNXRUNTIME_ROOT "C:/Users/ryanb/onnxruntime-win-x64-directml-1.24.1" CACHE PATH
+    "Path to extracted ONNX Runtime DirectML NuGet package")
+
+# NuGet layout differs from the pre-built GPU zip:
+#   headers: build/native/include/
+#   lib+dll: runtimes/win-x64/native/
+set(ORT_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/build/native/include")
+set(ORT_LIB_DIR     "${ONNXRUNTIME_ROOT}/runtimes/win-x64/native")
 
 # ORT include shim: demucs.onnx uses <onnxruntime/core/session/...> paths but
-# the pre-built Windows package places headers at a flat level.
+# the NuGet package places headers at a flat level.
 set(ORT_COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source/ort-compat")
 
 # Build demucs.onnx inference core as a static library (no CLI, no embedded models)
@@ -49,10 +56,10 @@ add_library(demucs_onnx_core STATIC ${DEMUCS_ONNX_SOURCES})
 target_include_directories(demucs_onnx_core PUBLIC
     "${DEMUCS_ONNX_ROOT}/src"
     "${DEMUCS_ONNX_ROOT}/vendor/eigen"
-    "${ONNXRUNTIME_ROOT}/include"
+    "${ORT_INCLUDE_DIR}"
     "${ORT_COMPAT_DIR}"
 )
-target_link_directories(demucs_onnx_core PUBLIC "${ONNXRUNTIME_ROOT}/lib")
+target_link_directories(demucs_onnx_core PUBLIC "${ORT_LIB_DIR}")
 target_link_libraries(demucs_onnx_core PUBLIC onnxruntime)
 target_compile_features(demucs_onnx_core PUBLIC cxx_std_20)
 
@@ -214,45 +221,19 @@ include(Benchmarks)
 include(GitHubENV)
 
 # ============================================================
-# Post-build: copy ONNX Runtime + cuDNN DLLs next to the executable
+# Post-build: copy ONNX Runtime DLLs next to the executable
+# DirectML itself is part of Windows 10 1903+ — no extra DLLs to ship.
 # ============================================================
 
-# cuDNN path (auto-detect common NVIDIA install locations)
-set(CUDNN_BIN_DIR "" CACHE PATH "Path to cuDNN bin directory containing DLLs")
-
-if (WIN32 AND CUDNN_BIN_DIR STREQUAL "")
-    # Auto-detect cuDNN from common NVIDIA install paths
-    file(GLOB CUDNN_CANDIDATES "C:/Program Files/NVIDIA/CUDNN/v*/bin/12*/x64")
-    if (CUDNN_CANDIDATES)
-        list(GET CUDNN_CANDIDATES -1 CUDNN_BIN_DIR)
-        message(STATUS "Auto-detected cuDNN: ${CUDNN_BIN_DIR}")
-    endif()
-endif()
-
 if (WIN32)
-    # Copy DLLs next to the standalone executable.
-    # Use the _Standalone target so TARGET_FILE_DIR resolves to the exe directory
-    # (avoids the clean-build bug where "Standalone" would be treated as a filename).
     set(_STANDALONE_TARGET "${PROJECT_NAME}_Standalone")
 
-    # Copy ONNX Runtime DLLs
-    file(GLOB ORT_DLLS "${ONNXRUNTIME_ROOT}/lib/*.dll")
+    file(GLOB ORT_DLLS "${ORT_LIB_DIR}/*.dll")
     foreach(DLL ${ORT_DLLS})
         add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${DLL}" "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>")
     endforeach()
 
-    # Copy cuDNN DLLs (required for CUDA execution provider)
-    if (NOT CUDNN_BIN_DIR STREQUAL "")
-        file(GLOB CUDNN_DLLS "${CUDNN_BIN_DIR}/*.dll")
-        foreach(DLL ${CUDNN_DLLS})
-            add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${DLL}" "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>")
-        endforeach()
-        message(STATUS "cuDNN DLLs will be copied from: ${CUDNN_BIN_DIR}")
-    else()
-        message(WARNING "cuDNN not found. GPU acceleration will not work. Set CUDNN_BIN_DIR to enable.")
-    endif()
+    message(STATUS "ORT DirectML DLLs will be copied from: ${ORT_LIB_DIR}")
 endif()
