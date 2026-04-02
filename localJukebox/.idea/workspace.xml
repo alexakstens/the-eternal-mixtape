@@ -76,7 +76,7 @@
   }
 }</component>
   <component name="RunManager">
-    <configuration name="localJukebox" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="localJukebox" TARGET_NAME="localJukebox" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="localJukebox" RUN_TARGET_NAME="localJukebox">
+    <configuration name="localJukebox" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="SampleSong_2.wav SampleSong_3.wav" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="localJukebox" TARGET_NAME="localJukebox" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="localJukebox" RUN_TARGET_NAME="localJukebox">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>

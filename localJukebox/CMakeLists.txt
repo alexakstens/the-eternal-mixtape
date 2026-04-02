@@ -1,18 +1,19 @@
 cmake_minimum_required(VERSION 3.28)
-project(localJukebox C)
+project(localJukebox CXX)
 
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(AUBIO REQUIRED aubio)
 pkg_check_modules(FFTW3 REQUIRED fftw3f)
 
 add_executable(localJukebox
-        main.c
-        song_analyzer.c
-        song_analyzer.h
-        warp.c
-        warp.h
+        main.cpp
+        song_analyzer.cpp
+        song_analyzer.hpp
+        warp.cpp
+        warp.hpp
         dr_wav.h
 )
 
