@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 97 73">
+  <defs>
+    <style>
+      .cls-1 {
+        filter: url(#drop-shadow-1);
+      }
+
+      .cls-2 {
+        fill: #fff;
+      }
+
+      .cls-3 {
+        fill: #686868;
+        stroke: #7c7c7c;
+        stroke-miterlimit: 10;
+      }
+    </style>
+    <filter id="drop-shadow-1" x="0" y="0" width="97" height="73" filterUnits="userSpaceOnUse">
+      <feOffset dx="-2" dy="2"/>
+      <feGaussianBlur result="blur" stdDeviation="4"/>
+      <feFlood flood-color="#000" flood-opacity=".3"/>
+      <feComposite in2="blur" operator="in"/>
+      <feComposite in="SourceGraphic"/>
+    </filter>
+  </defs>
+  <g id="Layer_1-2" data-name="Layer 1">
+    <g class="cls-1">
+      <rect class="cls-3" x="14.23" y="10.43" width="72" height="48" rx="6" ry="6"/>
+    </g>
+    <g>
+      <g>
+        <polygon class="cls-2" points="23.91 34.43 49.41 19.71 49.41 49.15 23.91 34.43"/>
+        <path class="cls-2" d="M48.91,20.58v27.71s-24-13.86-24-13.86l24-13.86M49.91,18.84l-27,15.59,27,15.59v-31.18h0Z"/>
+      </g>
+      <g>
+        <polygon class="cls-2" points="51.55 34.43 77.05 19.71 77.05 49.15 51.55 34.43"/>
+        <path class="cls-2" d="M76.55,20.58v27.71s-24-13.86-24-13.86l24-13.86M77.55,18.84l-27,15.59,27,15.59v-31.18h0Z"/>
+      </g>
+    </g>
+  </g>
+</svg>
