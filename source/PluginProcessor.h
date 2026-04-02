@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
 #include <map>
 #include <vector>
 #include "SeparationThread.h"
@@ -126,7 +127,21 @@ public:
     SeparationThread separationThread;
     SpliceThread     spliceThread;
 
-    void requestSplice (const juce::File& stemsDir, double sourceBPM, double targetBPM);
+    void requestSplice (const juce::File& stemsDir, double sourceBPM, double targetBPM,
+                        bool skipWarp = false, float density = 0.5f);
+
+    //==============================================================================
+    // UX contract: Splice output playback
+    //==============================================================================
+    void loadSpliceOutput (const juce::File& file);
+    void playSpliceOutput();
+    void stopSpliceOutput();
+    void rewindSpliceOutput();
+    void seekSpliceOutput (double positionSeconds);
+    void setSpliceOutputLoop (bool loop);
+    bool isSpliceOutputPlaying() const;
+    double getSpliceOutputPositionRatio() const;
+    double getSpliceOutputLengthSeconds() const;
 
 private:
     void initDefaultConfigPaths();
@@ -155,6 +170,12 @@ private:
     juce::File lastStemOutputDir_;
     float analysisProgress_ = 0.0f;
     juce::String lastAnalysisErrorMessage_;
+
+    // Splice output playback
+    juce::SpinLock                                    spliceLock_;
+    juce::AudioFormatManager                          spliceFormatManager_;
+    std::unique_ptr<juce::AudioFormatReaderSource>    spliceReaderSource_;
+    juce::AudioTransportSource                        spliceTransport_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

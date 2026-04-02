@@ -1,5 +1,34 @@
 #include "PluginEditor.h"
 
+//==============================================================================
+// Helper: load SVG states onto a DrawableButton (clears JUCE button background)
+static void applySVGImages (juce::DrawableButton& btn,
+                             const void* normalData,   int normalSize,
+                             const void* overData,     int overSize,
+                             const void* downData,     int downSize,
+                             const void* normalOnData  = nullptr, int normalOnSize  = 0,
+                             const void* overOnData    = nullptr, int overOnSize    = 0)
+{
+    auto mk = [] (const void* d, int s) -> std::unique_ptr<juce::Drawable>
+    {
+        if (d && s > 0)
+            return juce::Drawable::createFromImageData (d, (size_t) s);
+        return {};
+    };
+
+    auto normal   = mk (normalData,   normalSize);
+    auto over     = mk (overData,     overSize);
+    auto down     = mk (downData,     downSize);
+    auto normalOn = mk (normalOnData, normalOnSize);
+    auto overOn   = mk (overOnData,   overOnSize);
+
+    btn.setImages (normal.get(), over.get(), down.get(), nullptr,
+                   normalOn.get(), overOn.get(), nullptr, nullptr);
+
+    btn.setColour (juce::DrawableButton::backgroundColourId,   juce::Colours::transparentBlack);
+    btn.setColour (juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
+}
+
 PluginEditor::PluginEditor (PluginProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
@@ -36,9 +65,17 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         addAndMakeVisible (trackGainSliders[i]);
     }
 
-    // Splice panel
+    // Splice panel — Razor button + Skip Warp toggle
+    applySVGImages (spliceButton,
+                    BinaryData::Razor_off_svg,   BinaryData::Razor_off_svgSize,
+                    BinaryData::Razor_hover_svg, BinaryData::Razor_hover_svgSize,
+                    BinaryData::Razor_click_svg, BinaryData::Razor_click_svgSize);
     addAndMakeVisible (spliceButton);
     spliceButton.onClick = [this] { startSpliceRemix(); };
+
+    skipWarpToggle.setToggleState (false, juce::dontSendNotification);
+    skipWarpToggle.setTooltip ("Bypass time-stretching — mix stems at original tempo");
+    addAndMakeVisible (skipWarpToggle);
     bpmSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     bpmSlider.setTextBoxStyle (juce::Slider::TextBoxRight, true, 50, 20);
     bpmSlider.setRange (20.0, 300.0, 1.0);
@@ -61,6 +98,65 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     spliceStatusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (spliceStatusLabel);
     addAndMakeVisible (spliceProgressBar);
+
+    // Splice output transport buttons
+    applySVGImages (spliceBackBtn,
+                    BinaryData::Back_off_svg,   BinaryData::Back_off_svgSize,
+                    BinaryData::Back_hover_svg, BinaryData::Back_hover_svgSize,
+                    BinaryData::Back_on_svg,    BinaryData::Back_on_svgSize);
+    spliceBackBtn.onClick = [this] {
+        processorRef.rewindSpliceOutput();
+    };
+    addAndMakeVisible (spliceBackBtn);
+
+    applySVGImages (splicePlayBtn,
+                    BinaryData::Play_off_svg,   BinaryData::Play_off_svgSize,
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,    // normalOn (playing)
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize); // overOn
+    splicePlayBtn.setClickingTogglesState (true);
+    splicePlayBtn.onClick = [this] {
+        if (splicePlayBtn.getToggleState())
+            processorRef.playSpliceOutput();
+        else
+            processorRef.stopSpliceOutput();
+    };
+    addAndMakeVisible (splicePlayBtn);
+
+    applySVGImages (spliceStopBtn,
+                    BinaryData::Stop_off_svg,   BinaryData::Stop_off_svgSize,
+                    BinaryData::Stop_hover_svg, BinaryData::Stop_hover_svgSize,
+                    BinaryData::Stop_on_svg,    BinaryData::Stop_on_svgSize);
+    spliceStopBtn.onClick = [this] {
+        processorRef.stopSpliceOutput();
+        processorRef.rewindSpliceOutput();
+        splicePlayBtn.setToggleState (false, juce::dontSendNotification);
+    };
+    addAndMakeVisible (spliceStopBtn);
+
+    applySVGImages (spliceForwardBtn,
+                    BinaryData::Forward_off_svg,   BinaryData::Forward_off_svgSize,
+                    BinaryData::Forward_hover_svg, BinaryData::Forward_hover_svgSize,
+                    BinaryData::Forward_on_svg,    BinaryData::Forward_on_svgSize);
+    spliceForwardBtn.onClick = [this] {
+        auto len = processorRef.getSpliceOutputLengthSeconds();
+        if (len > 0.0)
+            processorRef.seekSpliceOutput (len);
+    };
+    addAndMakeVisible (spliceForwardBtn);
+
+    applySVGImages (spliceLoopBtn,
+                    BinaryData::Loop_off_svg,   BinaryData::Loop_off_svgSize,
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,    // normalOn
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize); // overOn
+    spliceLoopBtn.setClickingTogglesState (true);
+    spliceLoopBtn.onClick = [this] {
+        processorRef.setSpliceOutputLoop (spliceLoopBtn.getToggleState());
+    };
+    addAndMakeVisible (spliceLoopBtn);
 
     // Transport
     addAndMakeVisible (settingsButton);
@@ -174,7 +270,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     updateUIForMode();
     startTimerHz (10);
 
-    setSize (720, 840);
+    setSize (720, 900);
 }
 
 PluginEditor::~PluginEditor()
@@ -226,21 +322,20 @@ void PluginEditor::timerCallback()
     if (sThread.getStatus() == SpliceThread::Status::Complete && ! spliceLoaded)
         loadSpliceOutputWaveform();
 
+    // Sync play button toggle with actual transport state
+    bool isPlaying = processorRef.isSpliceOutputPlaying();
+    if (splicePlayBtn.getToggleState() != isPlaying)
+        splicePlayBtn.setToggleState (isPlaying, juce::dontSendNotification);
+
     repaint();
 }
 
 void PluginEditor::updateUIForMode()
 {
     if (isExpertiseMode_)
-    {
-        spliceButton.setButtonText ("SPLICE (options)");
         recButton.setButtonText ("REC (choose file)");
-    }
     else
-    {
-        spliceButton.setButtonText ("SPLICE");
         recButton.setButtonText ("REC");
-    }
 }
 
 void PluginEditor::paint (juce::Graphics& g)
@@ -276,18 +371,35 @@ void PluginEditor::resized()
 
     r.removeFromTop (6);
 
-    auto spliceRow = r.removeFromTop (32);
-    spliceButton.setBounds (spliceRow.removeFromLeft (100).reduced (2));
+    auto spliceRow = r.removeFromTop (40);
+    spliceButton.setBounds (spliceRow.removeFromLeft (40));
+    spliceRow.removeFromLeft (6);
     bpmLabel.setBounds (spliceRow.removeFromLeft (32).reduced (2));
     bpmSlider.setBounds (spliceRow.removeFromLeft (120).reduced (2));
     densityLabel.setBounds (spliceRow.removeFromLeft (60).reduced (2));
     densitySlider.setBounds (spliceRow.removeFromLeft (140).reduced (2));
+    spliceRow.removeFromLeft (8);
+    skipWarpToggle.setBounds (spliceRow.removeFromLeft (90).reduced (2));
 
     r.removeFromTop (6);
 
     // Splice output waveform
     spliceOutputWaveform.setBounds (r.removeFromTop (70).reduced (0, 2));
-    r.removeFromTop (3);
+    r.removeFromTop (4);
+
+    // Splice transport row (Back / Play / Stop / Forward / Loop)
+    {
+        auto transportRow = r.removeFromTop (38);
+        const int btnW = 38;
+        spliceBackBtn.setBounds    (transportRow.removeFromLeft (btnW));
+        splicePlayBtn.setBounds    (transportRow.removeFromLeft (btnW));
+        spliceStopBtn.setBounds    (transportRow.removeFromLeft (btnW));
+        spliceForwardBtn.setBounds (transportRow.removeFromLeft (btnW));
+        transportRow.removeFromLeft (8);
+        spliceLoopBtn.setBounds    (transportRow.removeFromLeft (btnW));
+    }
+    r.removeFromTop (4);
+
     spliceProgressBar.setBounds (r.removeFromTop (16));
     r.removeFromTop (3);
     spliceStatusLabel.setBounds (r.removeFromTop (18));
@@ -488,17 +600,22 @@ void PluginEditor::startSpliceRemix()
     spliceLoaded = false;
     spliceOutputWaveform.clear();
 
-    // Source BPM defaults to 120 until BeatAnalyzer (aubio) is wired in.
-    const double sourceBPM = 120.0;
+    // sourceBPM = 0.0 → auto-detect via BeatAnalyzer in SpliceThread
     const double targetBPM = processorRef.getGlobalBPM();
+    const bool   skip      = skipWarpToggle.getToggleState();
 
-    processorRef.requestSplice (stemsDir, sourceBPM, targetBPM);
+    processorRef.requestSplice (stemsDir, 0.0, targetBPM, skip,
+                                (float) processorRef.getSpliceDensity());
 }
 
 void PluginEditor::loadSpliceOutputWaveform()
 {
     auto outputFile = processorRef.spliceThread.getOutputFile();
     if (outputFile.existsAsFile())
+    {
         spliceOutputWaveform.loadFile (outputFile);
+        processorRef.loadSpliceOutput (outputFile);
+        splicePlayBtn.setToggleState (false, juce::dontSendNotification);
+    }
     spliceLoaded = true;
 }

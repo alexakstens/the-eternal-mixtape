@@ -51,7 +51,8 @@ private:
     juce::Slider trackGainSliders[kNumTracks];
 
     // Splice panel
-    juce::TextButton spliceButton { "SPLICE" };
+    juce::DrawableButton spliceButton  { "Razor",     juce::DrawableButton::ImageFitted };
+    juce::ToggleButton   skipWarpToggle { "Skip Warp" };
     juce::Slider bpmSlider;
     juce::Slider densitySlider;
     juce::Label bpmLabel { {}, "BPM" };
@@ -63,6 +64,13 @@ private:
     juce::ProgressBar spliceProgressBar { spliceProgressValue };
     juce::Label spliceStatusLabel;
     bool spliceLoaded = false;
+
+    // Splice output transport controls
+    juce::DrawableButton spliceBackBtn    { "Back",    juce::DrawableButton::ImageFitted };
+    juce::DrawableButton splicePlayBtn    { "Play",    juce::DrawableButton::ImageFitted };
+    juce::DrawableButton spliceStopBtn    { "Stop",    juce::DrawableButton::ImageFitted };
+    juce::DrawableButton spliceForwardBtn { "Forward", juce::DrawableButton::ImageFitted };
+    juce::DrawableButton spliceLoopBtn    { "Loop",    juce::DrawableButton::ImageFitted };
 
     // Transport
     juce::TextButton settingsButton { "Settings" };

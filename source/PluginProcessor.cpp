@@ -13,12 +13,16 @@ PluginProcessor::PluginProcessor()
                        )
 {
     initDefaultConfigPaths();
+    spliceFormatManager_.registerBasicFormats();
     for (int i = 0; i < kNumTracks; ++i)
         trackState_[i].name = "Track " + juce::String (char ('A' + i));
 }
 
 PluginProcessor::~PluginProcessor()
 {
+    spliceTransport_.stop();
+    spliceTransport_.setSource (nullptr);
+    spliceReaderSource_.reset();
     separationThread.stopThread (5000);
 }
 
@@ -90,15 +94,12 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 //==============================================================================
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    spliceTransport_.prepareToPlay (samplesPerBlock, sampleRate);
 }
 
 void PluginProcessor::releaseResources()
 {
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
+    spliceTransport_.releaseResources();
 }
 
 bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -152,6 +153,16 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         auto* channelData = buffer.getWritePointer (channel);
         juce::ignoreUnused (channelData);
         // ..do something to the data...
+    }
+
+    // Mix in splice output playback
+    {
+        const juce::SpinLock::ScopedTryLockType tryLock (spliceLock_);
+        if (tryLock.isLocked() && spliceTransport_.isPlaying())
+        {
+            juce::AudioSourceChannelInfo info (&buffer, 0, buffer.getNumSamples());
+            spliceTransport_.getNextAudioBlock (info);
+        }
     }
 
     // Update master level for UI meter (peak of output)
@@ -387,11 +398,13 @@ double PluginProcessor::getGlobalBPM() const
 //==============================================================================
 void PluginProcessor::requestSplice (const juce::File& stemsDir,
                                      double sourceBPM,
-                                     double targetBPM)
+                                     double targetBPM,
+                                     bool   skipWarp,
+                                     float  density)
 {
     if (spliceThread.isThreadRunning())
         return;
-    spliceThread.configure (stemsDir, sourceBPM, targetBPM);
+    spliceThread.configure (stemsDir, sourceBPM, targetBPM, skipWarp, density);
     spliceThread.startThread();
 }
 
@@ -482,6 +495,69 @@ float PluginProcessor::getAnalysisProgress() const
 juce::String PluginProcessor::getLastAnalysisErrorMessage() const
 {
     return lastAnalysisErrorMessage_;
+}
+
+//==============================================================================
+// UX contract: Splice output playback
+//==============================================================================
+void PluginProcessor::loadSpliceOutput (const juce::File& file)
+{
+    // Stop first — audio thread will see isPlaying()==false before setSource runs
+    spliceTransport_.stop();
+
+    const juce::SpinLock::ScopedLockType sl (spliceLock_);
+    spliceTransport_.setSource (nullptr);
+    spliceReaderSource_.reset();
+
+    if (file.existsAsFile())
+    {
+        if (auto* reader = spliceFormatManager_.createReaderFor (file))
+        {
+            spliceReaderSource_ = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
+            spliceTransport_.setSource (spliceReaderSource_.get(), 0, nullptr, reader->sampleRate);
+        }
+    }
+}
+
+void PluginProcessor::playSpliceOutput()
+{
+    spliceTransport_.start();
+}
+
+void PluginProcessor::stopSpliceOutput()
+{
+    spliceTransport_.stop();
+}
+
+void PluginProcessor::rewindSpliceOutput()
+{
+    spliceTransport_.setPosition (0.0);
+}
+
+void PluginProcessor::seekSpliceOutput (double positionSeconds)
+{
+    spliceTransport_.setPosition (positionSeconds);
+}
+
+void PluginProcessor::setSpliceOutputLoop (bool loop)
+{
+    spliceTransport_.setLooping (loop);
+}
+
+bool PluginProcessor::isSpliceOutputPlaying() const
+{
+    return spliceTransport_.isPlaying();
+}
+
+double PluginProcessor::getSpliceOutputPositionRatio() const
+{
+    double len = spliceTransport_.getLengthInSeconds();
+    return len > 0.0 ? spliceTransport_.getCurrentPosition() / len : 0.0;
+}
+
+double PluginProcessor::getSpliceOutputLengthSeconds() const
+{
+    return spliceTransport_.getLengthInSeconds();
 }
 
 //==============================================================================
