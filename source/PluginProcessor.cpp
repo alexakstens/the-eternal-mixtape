@@ -13,12 +13,15 @@ PluginProcessor::PluginProcessor()
                        )
 {
     initDefaultConfigPaths();
+    spliceFormatManager_.registerBasicFormats(); // used in loadSpliceOutput
     for (int i = 0; i < kNumTracks; ++i)
         trackState_[i].name = "Track " + juce::String (char ('A' + i));
 }
 
 PluginProcessor::~PluginProcessor()
 {
+    spliceIsPlaying_.store (false);
+    separationThread.stopThread (5000);
 }
 
 //==============================================================================
@@ -89,15 +92,11 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 //==============================================================================
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
     juce::ignoreUnused (sampleRate, samplesPerBlock);
 }
 
 void PluginProcessor::releaseResources()
 {
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
 }
 
 bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -151,6 +150,48 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         auto* channelData = buffer.getWritePointer (channel);
         juce::ignoreUnused (channelData);
         // ..do something to the data...
+    }
+
+    // Mix in splice output playback (per-stem with track gains)
+    if (spliceIsPlaying_.load())
+    {
+        const juce::SpinLock::ScopedTryLockType tryLock (spliceLock_);
+        if (tryLock.isLocked() && spliceTotalSamples_ > 0)
+        {
+            const int numOut = buffer.getNumSamples();
+            int64_t pos      = splicePlayPos_.load();
+
+            for (int si = 0; si < kNumTracks; ++si)
+            {
+                if (! spliceStems_[si].valid) continue;
+                const float gain = getTrackGain (si);
+                const auto& stemBuf = spliceStems_[si].audio;
+
+                for (int c = 0; c < std::min (2, buffer.getNumChannels()); ++c)
+                {
+                    auto* out = buffer.getWritePointer (c);
+                    for (int n = 0; n < numOut; ++n)
+                    {
+                        int64_t spos = pos + n;
+                        if (spos < stemBuf.getNumSamples())
+                            out[n] += gain * stemBuf.getSample (c, (int) spos);
+                    }
+                }
+            }
+
+            int64_t newPos = pos + numOut;
+            if (newPos >= spliceTotalSamples_)
+            {
+                if (spliceIsLooping_.load())
+                    newPos = newPos % spliceTotalSamples_;
+                else
+                {
+                    newPos = spliceTotalSamples_;
+                    spliceIsPlaying_.store (false);
+                }
+            }
+            splicePlayPos_.store (newPos);
+        }
     }
 
     // Update master level for UI meter (peak of output)
@@ -384,6 +425,18 @@ double PluginProcessor::getGlobalBPM() const
 //==============================================================================
 // UX contract: Actions
 //==============================================================================
+void PluginProcessor::requestSplice (const juce::File& stemsDir,
+                                     double sourceBPM,
+                                     double targetBPM,
+                                     bool   skipWarp,
+                                     float  density)
+{
+    if (spliceThread.isThreadRunning())
+        return;
+    spliceThread.configure (stemsDir, sourceBPM, targetBPM, skipWarp, density);
+    spliceThread.startThread();
+}
+
 void PluginProcessor::applyAutoSplice()
 {
 }
@@ -411,7 +464,17 @@ void PluginProcessor::startRecording (const juce::File& outputFile)
 //==============================================================================
 std::vector<juce::File> PluginProcessor::getLastStemFiles() const
 {
-    return lastStemFiles_;
+    if (lastStemOutputDir_ == juce::File{})
+        return {};
+    auto stems = { "drums.wav", "bass.wav", "other.wav", "vocals.wav", "guitar.wav", "piano.wav" };
+    std::vector<juce::File> result;
+    for (auto& name : stems)
+    {
+        auto f = lastStemOutputDir_.getChildFile (name);
+        if (f.existsAsFile())
+            result.push_back (f);
+    }
+    return result;
 }
 
 juce::File PluginProcessor::getLastStemOutputDir() const
@@ -421,27 +484,27 @@ juce::File PluginProcessor::getLastStemOutputDir() const
 
 float PluginProcessor::getStemProgress() const
 {
-    return stemProgress_;
+    return separationThread.getProgress();
 }
 
 juce::String PluginProcessor::getStemStatusMessage() const
 {
-    return stemStatusMessage_;
+    return separationThread.getStatusMessage();
 }
 
 juce::String PluginProcessor::getStemErrorMessage() const
 {
-    return stemErrorMessage_;
+    return separationThread.getErrorMessage();
 }
 
 void PluginProcessor::requestStemSeparation (const juce::File& inputFile,
                                              const juce::File& modelFile,
-                                             const juce::File& outputDir)
+                                             const juce::File& outputDir,
+                                             bool useCuda)
 {
-    juce::ignoreUnused (inputFile, modelFile, outputDir);
     lastStemOutputDir_ = outputDir;
-    stemProgress_ = 0.0f;
-    stemStatusMessage_ = "Stub: not implemented";
+    separationThread.configure (inputFile, modelFile, outputDir, useCuda);
+    separationThread.startThread();
 }
 
 //==============================================================================
@@ -461,6 +524,98 @@ float PluginProcessor::getAnalysisProgress() const
 juce::String PluginProcessor::getLastAnalysisErrorMessage() const
 {
     return lastAnalysisErrorMessage_;
+}
+
+//==============================================================================
+// UX contract: Splice output playback
+//==============================================================================
+void PluginProcessor::loadSpliceOutput (const juce::File& outputDir)
+{
+    spliceIsPlaying_.store (false);
+
+    const juce::SpinLock::ScopedLockType sl (spliceLock_);
+
+    for (int i = 0; i < kNumTracks; ++i)
+        spliceStems_[i].valid = false;
+
+    spliceTotalSamples_ = 0;
+    splicePlayPos_.store (0);
+
+    if (! outputDir.isDirectory())
+        return;
+
+    juce::AudioFormatManager fmt;
+    fmt.registerBasicFormats();
+
+    int64_t maxLen = 0;
+    for (int i = 0; i < kNumTracks; ++i)
+    {
+        auto f = outputDir.getChildFile ("splice_stem_" + juce::String (i) + ".wav");
+        if (! f.existsAsFile()) continue;
+
+        std::unique_ptr<juce::AudioFormatReader> reader (fmt.createReaderFor (f));
+        if (! reader) continue;
+
+        spliceSampleRate_ = (int) reader->sampleRate;
+        const int numSmp  = (int) reader->lengthInSamples;
+        const int numCh   = std::min (2, (int) reader->numChannels);
+
+        spliceStems_[i].audio.setSize (2, numSmp, false, true, false);
+        reader->read (&spliceStems_[i].audio, 0, numSmp, 0, true, numCh > 1);
+
+        // If mono source, copy L→R
+        if (numCh == 1)
+            spliceStems_[i].audio.copyFrom (1, 0, spliceStems_[i].audio, 0, 0, numSmp);
+
+        spliceStems_[i].valid = true;
+        maxLen = std::max (maxLen, (int64_t) numSmp);
+    }
+
+    spliceTotalSamples_ = maxLen;
+}
+
+void PluginProcessor::playSpliceOutput()
+{
+    if (spliceTotalSamples_ > 0)
+        spliceIsPlaying_.store (true);
+}
+
+void PluginProcessor::stopSpliceOutput()
+{
+    spliceIsPlaying_.store (false);
+}
+
+void PluginProcessor::rewindSpliceOutput()
+{
+    splicePlayPos_.store (0);
+}
+
+void PluginProcessor::seekSpliceOutput (double positionSeconds)
+{
+    int64_t pos = (int64_t) (positionSeconds * spliceSampleRate_);
+    splicePlayPos_.store (juce::jlimit ((int64_t) 0, spliceTotalSamples_, pos));
+}
+
+void PluginProcessor::setSpliceOutputLoop (bool loop)
+{
+    spliceIsLooping_.store (loop);
+}
+
+bool PluginProcessor::isSpliceOutputPlaying() const
+{
+    return spliceIsPlaying_.load();
+}
+
+double PluginProcessor::getSpliceOutputPositionRatio() const
+{
+    if (spliceTotalSamples_ <= 0) return 0.0;
+    return (double) splicePlayPos_.load() / (double) spliceTotalSamples_;
+}
+
+double PluginProcessor::getSpliceOutputLengthSeconds() const
+{
+    if (spliceSampleRate_ <= 0) return 0.0;
+    return (double) spliceTotalSamples_ / (double) spliceSampleRate_;
 }
 
 //==============================================================================

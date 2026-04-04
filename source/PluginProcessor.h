@@ -1,8 +1,11 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
 #include <map>
 #include <vector>
+#include "SeparationThread.h"
+#include "SpliceThread.h"
 
 #if (MSVC)
 #include "ipps.h"
@@ -110,7 +113,8 @@ public:
     juce::String getStemErrorMessage() const;
     void requestStemSeparation (const juce::File& inputFile,
                                 const juce::File& modelFile,
-                                const juce::File& outputDir);
+                                const juce::File& outputDir,
+                                bool useCuda = false);
 
     //==============================================================================
     // UX contract: Analysis (stub: no result yet)
@@ -118,6 +122,26 @@ public:
     void runAnalysisAsync (const juce::File& file);
     float getAnalysisProgress() const;
     juce::String getLastAnalysisErrorMessage() const;
+
+    // Accessible from the editor for progress polling
+    SeparationThread separationThread;
+    SpliceThread     spliceThread;
+
+    void requestSplice (const juce::File& stemsDir, double sourceBPM, double targetBPM,
+                        bool skipWarp = false, float density = 0.5f);
+
+    //==============================================================================
+    // UX contract: Splice output playback
+    //==============================================================================
+    void loadSpliceOutput (const juce::File& outputDir);
+    void playSpliceOutput();
+    void stopSpliceOutput();
+    void rewindSpliceOutput();
+    void seekSpliceOutput (double positionSeconds);
+    void setSpliceOutputLoop (bool loop);
+    bool isSpliceOutputPlaying() const;
+    double getSpliceOutputPositionRatio() const;
+    double getSpliceOutputLengthSeconds() const;
 
 private:
     void initDefaultConfigPaths();
@@ -143,13 +167,20 @@ private:
     TrackState trackState_[kNumTracks];
     double globalBPM_ = 120.0;
     float spliceDensity_ = 0.5f;
-    std::vector<juce::File> lastStemFiles_;
     juce::File lastStemOutputDir_;
-    float stemProgress_ = 0.0f;
-    juce::String stemStatusMessage_;
-    juce::String stemErrorMessage_;
     float analysisProgress_ = 0.0f;
     juce::String lastAnalysisErrorMessage_;
+
+    // Splice output playback — 4 per-stem buffers mixed with track gains in processBlock
+    juce::SpinLock spliceLock_;
+    juce::AudioFormatManager spliceFormatManager_;
+    struct SpliceStemBuffer { juce::AudioBuffer<float> audio { 2, 0 }; bool valid = false; };
+    SpliceStemBuffer         spliceStems_[kNumTracks];
+    std::atomic<int64_t>     splicePlayPos_   { 0 };
+    std::atomic<bool>        spliceIsPlaying_ { false };
+    std::atomic<bool>        spliceIsLooping_ { false };
+    int64_t                  spliceTotalSamples_ = 0;
+    int                      spliceSampleRate_   = 44100;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };
