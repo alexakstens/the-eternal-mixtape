@@ -9,6 +9,8 @@
 #define WIN_SIZE 4096
 #define PAD_FACTOR 4
 #define PI 3.14159265358979323846f
+#define TRANSIENT_FACTOR 5.f
+#define RESYNTH_WINDOW_POWER 0.125f
 
 static float m_to_f(int midi) {
     return 440.0f * powf(2.0f, (midi - 69) / 12.0f);
@@ -64,17 +66,21 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
         // Simple progress indicator
         if (pIn % (sample_rate * 5) < h_a) printf("Processing... %.1f%%\r", (float)pIn/input_frames * 100);
 
+        // Energy Processing for Window Overlap-Add
         float curr_energy = 0;
         for (int i = 0; i < WIN_SIZE; i++) {
             float s = input_data[(pIn + i) * channels]; // Check Left channel for energy
             curr_energy += s * s;
         }
-        int is_transient = (curr_energy > prev_energy * 10.0f);
+
+        // Check for Transients
+        int is_transient = (curr_energy > prev_energy * TRANSIENT_FACTOR); // Magic number, 5.f factor between last and current energy indicates sharp transient
         prev_energy = curr_energy;
 
+        // FFT Processing
         for (int c = 0; c < (int)channels; c++) {
             memset(in_real, 0, sizeof(float) * nFFT);
-            for (int i = 0; i < WIN_SIZE; i++) in_real[i] = input_data[(pIn + i) * channels + c] * hann_win[i];
+            for (int i = 0; i < WIN_SIZE; i++) in_real[i] = input_data[(pIn + i) * channels + c] * hann_win[i]; // Analysis window
 
             fftwf_execute(p_forward);
 
@@ -84,7 +90,7 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
             }
 
             if (c == 0) {
-                // OPTIMIZED PEAK FINDING
+                // OPTIMIZED PEAK FINDING FOR LOCKED PHASE
                 int peak_count = 0;
                 for (int i = 1; i < nBins - 1; i++) {
                     if (mag[i] > mag[i-1] && mag[i] > mag[i+1]) peaks[peak_count++] = i;
@@ -104,6 +110,7 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
                     for (int i = 0; i < nBins; i++) nearest_peak[i] = i;
                 }
 
+                // Phase Progression
                 float h_ratio = (float)h_s / h_a;
                 for (int i = 0; i < nBins; i++) {
                     float expected = 2.0f * PI * h_a * i / nFFT;
@@ -114,6 +121,7 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
                     omega[i] = (expected + delta) * h_ratio * keyRatio;
                 }
 
+                // Locking Phase
                 if (is_transient) {
                     memcpy(psi, phase, nBins * sizeof(float));
                 } else {
@@ -150,7 +158,7 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
                 int idx1 = (idx + 1 < WIN_SIZE) ? idx + 1 : idx;
 
                 float val = (in_real[idx] + frac * (in_real[idx1] - in_real[idx])) / nFFT;
-                val *= hann_resamp[i];
+                val *= hann_resamp[i]**RESYNTH_WINDOW_POWER; //
 
                 if (pOut + i < (int)expected_out_len) {
                     audio_out[(pOut + i) * channels + c] += val;
