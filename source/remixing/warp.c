@@ -10,7 +10,7 @@
 #define PAD_FACTOR 4
 #define PI 3.14159265358979323846f
 #define TRANSIENT_FACTOR 5.f
-#define RESYNTH_WINDOW_POWER 0.125f
+#define RESYNTH_WINDOW_EXP 0.125f
 
 static float m_to_f(int midi) {
     return 440.0f * powf(2.0f, (midi - 69) / 12.0f);
@@ -23,12 +23,12 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
     float keyRatio = m_to_f(target_key) / m_to_f(source_key);
     float tempoRatio = target_bpm / source_bpm;
 
+    // Hop Sizes & FFT Setup
     int lx = (int)floorf(WIN_SIZE / keyRatio);
     int h_s = lx / 8;
     if (h_s < 1) h_s = 1;
     int h_a = (int)(h_s * tempoRatio);
     if (h_a < 1) h_a = 1;
-
     int nFFT = WIN_SIZE * PAD_FACTOR;
     int nBins = nFFT / 2 + 1;
 
@@ -52,10 +52,11 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
     float* audio_out = calloc(expected_out_len * channels, sizeof(float));
     float* weight_out = calloc(expected_out_len, sizeof(float));
 
+    // Windows for Analysis and Resynthesis
     float hann_win[WIN_SIZE];
     for (int i = 0; i < WIN_SIZE; i++) hann_win[i] = 0.5f * (1.0f - cosf(2.0f * PI * i / (WIN_SIZE - 1)));
     float hann_resamp[lx];
-    for (int i = 0; i < lx; i++) hann_resamp[i] = 0.5f * (1.0f - cosf(2.0f * PI * i / (lx - 1)));
+    for (int i = 0; i < lx; i++) hann_resamp[i] = 0.5f * (1.0f - cosf(2.0f * PI * i / (lx - 1))); // Note: hann_resamp is scaled when applied to reduce tremolo artifacts hann_win**RESYNTH_WINDOW_EXP
 
     int pIn = 0, pOut = 0;
     float prev_energy = 0;
@@ -73,8 +74,8 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
             curr_energy += s * s;
         }
 
-        // Check for Transients
-        int is_transient = (curr_energy > prev_energy * TRANSIENT_FACTOR); // Magic number, 5.f factor between last and current energy indicates sharp transient
+        // Check for Transients (Drum Preservation)
+        int is_transient = (curr_energy > prev_energy * TRANSIENT_FACTOR); // Higher TRANSIENT_FACTOR makes stage less sensitive to small energy jumps.
         prev_energy = curr_energy;
 
         // FFT Processing
@@ -90,13 +91,13 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
             }
 
             if (c == 0) {
-                // OPTIMIZED PEAK FINDING FOR LOCKED PHASE
+                // OPTIMIZED SPECTRAL PEAK FINDING FOR LOCKED PHASE
                 int peak_count = 0;
                 for (int i = 1; i < nBins - 1; i++) {
-                    if (mag[i] > mag[i-1] && mag[i] > mag[i+1]) peaks[peak_count++] = i;
+                    if (mag[i] > mag[(i-1)%nBins] && mag[i] > mag[(i+1)%nBins]) peaks[peak_count++] = i; // %nBins for wraparound protection, effectively np.roll()
                 }
 
-                // OPTIMIZED PEAK MAPPING (Single Pass)
+                // OPTIMIZED SPECTRAL PEAK MAPPING (Single Pass)
                 if (peak_count > 0) {
                     int curr_p_idx = 0;
                     for (int i = 0; i < nBins; i++) {
@@ -143,7 +144,7 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
 
             // Spectral Processing
             for (int i = 0; i < nBins; i++) {
-                if (keyRatio > 1.0f && i > (nFFT / (2 * keyRatio))) mag[i] = 0; // Anti-alias
+                if (keyRatio > 1.0f && i > (nFFT / (2 * keyRatio))) mag[i] = 0; // Anti-alias brickwall
                 out_spec[i] = mag[i] * (cosf(psi[c * nBins + i]) + I * sinf(psi[c * nBins + i]));
             }
 
@@ -158,7 +159,7 @@ float* warp_audio(float* input_data, unsigned int input_frames, unsigned int cha
                 int idx1 = (idx + 1 < WIN_SIZE) ? idx + 1 : idx;
 
                 float val = (in_real[idx] + frac * (in_real[idx1] - in_real[idx])) / nFFT;
-                val *= hann_resamp[i]**RESYNTH_WINDOW_POWER; //
+                val *= hann_resamp[i]**RESYNTH_WINDOW_EXP;
 
                 if (pOut + i < (int)expected_out_len) {
                     audio_out[(pOut + i) * channels + c] += val;
