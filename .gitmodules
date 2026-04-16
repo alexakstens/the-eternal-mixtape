@@ -14,6 +14,10 @@
 	path = modules/clap-juce-extensions
 	url = https://github.com/free-audio/clap-juce-extensions.git
 	branch = main
+[submodule "modules/time-stretcher"]
+	path = modules/time-stretcher
+	url = https://github.com/jatinchowdhury18/time-stretcher.git
+	branch = main
 [submodule "demucs.onnx"]
 	path = demucs.onnx
 	url = https://github.com/sevagh/demucs.onnx.git
