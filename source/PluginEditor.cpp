@@ -217,17 +217,36 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     for (auto* e : { &stemInputEditor, &stemModelEditor, &stemOutputEditor })
         e->setReadOnly (true);
 
-    // Model path resolution order:
-    // 1. Next to the executable (distribution / installer layout)
-    // 2. demucs.onnx/onnx-models/ inside the source tree (dev build, injected by CMake)
-    const juce::String modelFilename = "htdemucs.onnx";
-    juce::File defaultModel = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
-                                  .getParentDirectory()
-                                  .getChildFile (modelFilename);
-    if (! defaultModel.existsAsFile())
-        defaultModel = juce::File (DEMUCS_ONNX_MODELS_DIR).getChildFile (modelFilename);
-    if (defaultModel.existsAsFile())
-        stemModelEditor.setText (defaultModel.getFullPathName());
+    // Model path resolution:
+    // 1. <exe>/models/htdemucs_cpu.onnx (CPU build) or htdemucs.onnx (GPU build) — ZIP layout
+    // 2. <exe>/models/htdemucs.onnx as universal fallback
+    // 3. Source-tree onnx-models/ via CMake define — dev build only
+    {
+        auto exeDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+       #if JUCE_MAC
+        // In an app bundle, executable is <App>.app/Contents/MacOS/ — models live in Contents/Resources/models/
+        auto modelsDir = exeDir.getParentDirectory().getChildFile ("Resources").getChildFile ("models");
+       #else
+        auto modelsDir = exeDir.getChildFile ("models");
+       #endif
+
+       #if defined(ORT_USE_GPU)
+        juce::String preferredName = "htdemucs.onnx";
+       #else
+        juce::String preferredName = "htdemucs_cpu.onnx";
+       #endif
+
+        juce::File defaultModel = modelsDir.getChildFile (preferredName);
+        if (! defaultModel.existsAsFile())
+            defaultModel = modelsDir.getChildFile ("htdemucs.onnx"); // universal fallback
+       #if defined(DEMUCS_ONNX_MODELS_DIR)
+        if (! defaultModel.existsAsFile())
+            defaultModel = juce::File (DEMUCS_ONNX_MODELS_DIR).getChildFile ("htdemucs.onnx");
+       #endif
+
+        if (defaultModel.existsAsFile())
+            stemModelEditor.setText (defaultModel.getFullPathName());
+    }
 
     for (auto* l : { &stemInputLabel, &stemModelLabel, &stemOutputLabel })
     {
@@ -250,8 +269,6 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     stemProcessButton.onClick = [this] { startStemSeparation(); };
     stemCancelButton.onClick  = [this] { cancelStemSeparation(); };
 
-    stemCudaToggle.setToggleState (true, juce::dontSendNotification);
-    addAndMakeVisible (stemCudaToggle);
     addAndMakeVisible (stemProgressBar);
 
     stemStatusLabel.setText ("Ready", juce::dontSendNotification);
@@ -441,8 +458,6 @@ void PluginEditor::resized()
     r.removeFromTop (stemGap);
 
     stemRow = r.removeFromTop (28);
-    stemCudaToggle.setBounds (stemRow.removeFromLeft (80));
-    stemRow.removeFromLeft (10);
     stemProcessButton.setBounds (stemRow.removeFromLeft (80));
     stemRow.removeFromLeft (6);
     stemCancelButton.setBounds (stemRow.removeFromLeft (80));
@@ -521,8 +536,7 @@ void PluginEditor::startStemSeparation()
 
     processorRef.requestStemSeparation (juce::File (inputPath),
                                         juce::File (modelPath),
-                                        juce::File (outputPath),
-                                        stemCudaToggle.getToggleState());
+                                        juce::File (outputPath));
 }
 
 void PluginEditor::cancelStemSeparation()

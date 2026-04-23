@@ -96,7 +96,6 @@ private:
     juce::TextButton stemOutputBrowse { "Browse" };
     juce::TextButton stemProcessButton { "Separate" };
     juce::TextButton stemCancelButton  { "Cancel" };
-    juce::ToggleButton stemCudaToggle  { "CUDA" };
     double stemProgressValue = 0.0;
     juce::ProgressBar stemProgressBar { stemProgressValue };
     juce::Label stemStatusLabel;
