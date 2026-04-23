@@ -3,13 +3,28 @@ Final project for GT Audio Software Engineering MUSI6106, Spring 2026
 
 Authors: Alex Akstens, Ryan Baker, Matias Cevallos, Evelyne Li, Marcus Parker
 
-The Eternal Mixtape (TEM) is a audio plugin / app that gives an easy, accessible workflow for quickly creating remixes of songs.
+The Eternal Mixtape (TEM) is a standalone app that gives an easy, accessible workflow for quickly creating remixes of songs using AI-powered stem separation (Demucs v4).
 
 Made using the [Pamplejuce template](https://github.com/sudara/pamplejuce)
 
 ---
 
-## Getting Started — Read This First
+## Download & Run (End Users)
+
+1. Go to the [Releases page](../../releases) and download the ZIP for your platform.
+2. Unzip and double-click the executable — no installation required.
+3. The Demucs model (167 MB) is bundled in the ZIP. No internet connection needed after download.
+
+**GPU acceleration** is automatic:
+- **Windows:** DirectML (any DirectX 12 GPU, Windows 10 1903+)
+- **macOS Apple Silicon:** CoreML/Neural Engine
+- **Linux / Intel Mac:** CPU inference
+
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed per-platform instructions and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for expected processing times.
+
+---
+
+## Developer Setup — Building from Source
 
 ### Step 1: Clone with submodules
 
