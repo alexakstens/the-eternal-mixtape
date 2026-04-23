@@ -5,7 +5,9 @@
       "name": "local",
       "displayName": "Local User Settings",
       "cacheVariables": {
-        "VST3_COPY_DIR": "C:/Users/YOUR_USERNAME/AppData/Roaming/VST3"
+        "VST3_COPY_DIR": "C:/Users/YOUR_USERNAME/AppData/Roaming/VST3",
+        "ONNXRUNTIME_ROOT": "C:/Users/YOUR_USERNAME/onnxruntime-win-x64-directml-1.24.1",
+        "ORT_USE_GPU": "ON"
       }
     }
   ]

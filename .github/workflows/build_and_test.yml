@@ -18,6 +18,8 @@ env:
   SCCACHE_GHA_ENABLED: true
   SCCACHE_CACHE_MULTIARCH: 1
   SCCACHE_IDLE_TIMEOUT: 0
+  ORT_VERSION: "1.24.1"
+  ONNXRUNTIME_ROOT: ""  # set at runtime by the ORT download steps below
 
 defaults:
   run:
@@ -37,15 +39,25 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
-            pluginval-binary: ./pluginval
             extra-flags: -G Ninja
+            ort-pkg: onnxruntime-linux-x64
+            ort-ext: tgz
+            ort-use-gpu: "OFF"
           - name: macOS
             os: macos-14
-            pluginval-binary: pluginval.app/Contents/MacOS/pluginval
             extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-          - name: Windows
+            ort-pkg: onnxruntime-osx-universal2
+            ort-ext: tgz
+            ort-use-gpu: "ON"
+          - name: Windows-CPU
             os: windows-latest
-            pluginval-binary: ./pluginval.exe
+            ort-pkg: onnxruntime-win-x64
+            ort-ext: zip
+            ort-use-gpu: "OFF"
+          - name: Windows-GPU
+            os: windows-latest
+            ort-nuget: Microsoft.ML.OnnxRuntime.DirectML
+            ort-use-gpu: "ON"
 
     steps:
       # Setup MSVC toolchain and developer command prompt (Windows)
@@ -89,8 +101,26 @@ jobs:
       - name: Cache the build
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Download ONNX Runtime (archive — Linux, macOS, Windows CPU)
+        if: matrix.ort-pkg != ''
+        run: |
+          PKG="${{ matrix.ort-pkg }}-${{ env.ORT_VERSION }}"
+          curl -fL "https://github.com/microsoft/onnxruntime/releases/download/v${{ env.ORT_VERSION }}/${PKG}.${{ matrix.ort-ext }}" -o ort-archive
+          if [[ "${{ matrix.ort-ext }}" == "zip" ]]; then
+            7z x ort-archive -o.
+          else
+            tar -xzf ort-archive
+          fi
+          echo "ONNXRUNTIME_ROOT=${{ github.workspace }}/${PKG}" >> "$GITHUB_ENV"
+
+      - name: Download ONNX Runtime (NuGet — Windows GPU)
+        if: runner.os == 'Windows' && matrix.ort-use-gpu == 'ON'
+        run: |
+          nuget install "${{ matrix.ort-nuget }}" -Version "${{ env.ORT_VERSION }}" -NonInteractive
+          echo "ONNXRUNTIME_ROOT=${{ github.workspace }}/${{ matrix.ort-nuget }}.${{ env.ORT_VERSION }}" >> "$GITHUB_ENV"
+
       - name: Configure
-        run: cmake -B ${{ env.BUILD_DIR }} -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE}} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ${{ matrix.extra-flags }} .
+        run: cmake -B ${{ env.BUILD_DIR }} -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE}} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DONNXRUNTIME_ROOT="${{ env.ONNXRUNTIME_ROOT }}" -DORT_USE_GPU=${{ matrix.ort-use-gpu }} ${{ matrix.extra-flags }} .
 
       - name: Build
         run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }}
@@ -109,7 +139,7 @@ jobs:
           ARTIFACTS_PATH=${{ env.BUILD_DIR }}/${{ env.PROJECT_NAME }}_artefacts/${{ env.BUILD_TYPE }}
           echo "ARTIFACTS_PATH=$ARTIFACTS_PATH" >> $GITHUB_ENV
           echo "STANDALONE_DIR=$ARTIFACTS_PATH/Standalone" >> $GITHUB_ENV
-          echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-${{ runner.os }}" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-${{ matrix.name }}" >> $GITHUB_ENV
 
       - name: Import Certificates (macOS)
         uses: sudara/basic-macos-keychain-action@v1

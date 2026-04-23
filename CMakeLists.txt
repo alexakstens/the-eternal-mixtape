@@ -35,9 +35,15 @@ project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 set(DEMUCS_ONNX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/demucs.onnx" CACHE PATH
     "Path to the demucs.onnx submodule root")
 
-# Path to ONNX Runtime package (CPU or DirectML NuGet depending on ORT_USE_GPU)
-set(ONNXRUNTIME_ROOT "C:/Users/ryanb/onnxruntime-win-x64-directml-1.24.1" CACHE PATH
-    "Path to extracted ONNX Runtime package root")
+# Path to ONNX Runtime package (CPU or DirectML NuGet depending on ORT_USE_GPU).
+# Set in CMakeUserPresets.json for local dev, or via -DONNXRUNTIME_ROOT=... in CI.
+set(ONNXRUNTIME_ROOT "" CACHE PATH "Path to extracted ONNX Runtime package root")
+if (NOT ONNXRUNTIME_ROOT)
+    message(FATAL_ERROR
+        "ONNXRUNTIME_ROOT is not set.\n"
+        "  Local dev: copy CMakeUserPresets.json.example -> CMakeUserPresets.json and set ONNXRUNTIME_ROOT.\n"
+        "  CI / command line: pass -DONNXRUNTIME_ROOT=/path/to/ort at configure time.")
+endif()
 
 # Enable GPU inference: DirectML on Windows, CoreML on macOS.
 # CPU build: OFF (no GPU provider loaded, ships lightweight model).
