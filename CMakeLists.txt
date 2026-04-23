@@ -114,9 +114,6 @@ if(VST3_COPY_DIR)
     set_property(GLOBAL PROPERTY JUCE_VST3_COPY_DIR "${VST3_COPY_DIR}")
 endif()
 
-# Add CLAP format
-add_subdirectory(modules/clap-juce-extensions EXCLUDE_FROM_ALL)
-
 # Melatonin inspector (useful for UI development)
 add_subdirectory(modules/melatonin_inspector)
 
@@ -134,10 +131,6 @@ juce_add_plugin("${PROJECT_NAME}"
 
 # SharedCode interface library (pamplejuce pattern)
 add_library(SharedCode INTERFACE)
-
-clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
-    CLAP_ID "${BUNDLE_ID}"
-    CLAP_FEATURES audio-effect)
 
 # Enable fast math, C++20 and a few other target defaults
 include(SharedCodeDefaults)
