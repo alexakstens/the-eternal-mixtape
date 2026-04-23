@@ -126,8 +126,27 @@ public:
             }
 
             double sourceSampleRate = reader->sampleRate;
-            int numSamples = static_cast<int> (reader->lengthInSamples);
+            int64_t rawLength = reader->lengthInSamples;
             int numChannels = static_cast<int> (reader->numChannels);
+
+            // Validate metadata from potentially malformed files
+            if (sourceSampleRate <= 0.0)
+            {
+                errorMessage = "Invalid sample rate in audio file: " + inputFile.getFileName();
+                status.store (Status::Error);
+                return;
+            }
+
+            // Cap at 30 minutes to guard against corrupt length headers
+            const int64_t maxSamples = static_cast<int64_t> (sourceSampleRate * 60.0 * 30.0);
+            if (rawLength <= 0 || rawLength > maxSamples)
+            {
+                errorMessage = "Audio file has invalid or unsupported length: " + inputFile.getFileName();
+                status.store (Status::Error);
+                return;
+            }
+
+            int numSamples = static_cast<int> (rawLength);
 
             juce::AudioBuffer<float> audioBuffer (numChannels, numSamples);
             reader->read (&audioBuffer, 0, numSamples, 0, true, true);
