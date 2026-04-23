@@ -224,14 +224,14 @@ include(Benchmarks)
 include(GitHubENV)
 
 # ============================================================
-# Post-build: copy ONNX Runtime DLLs next to the executable (Windows only)
-# DirectML ships with Windows 10 1903+ — no extra runtime DLLs required.
+# Post-build: copy ONNX Runtime DLLs + model into the output tree
 # ============================================================
 
-if (WIN32)
-    # Use the _Standalone target so TARGET_FILE_DIR resolves to the exe directory.
-    set(_STANDALONE_TARGET "${PROJECT_NAME}_Standalone")
+set(_STANDALONE_TARGET "${PROJECT_NAME}_Standalone")
 
+# --- ORT DLLs (Windows only) ---
+# DirectML ships with Windows 10 1903+ — no extra runtime DLLs required.
+if (WIN32)
     file(GLOB ORT_DLLS "${ORT_LIB_DIR}/*.dll")
     foreach(DLL ${ORT_DLLS})
         add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
@@ -244,4 +244,35 @@ if (WIN32)
     else()
         message(STATUS "CPU build: ORT DLLs will be copied from ${ORT_LIB_DIR}")
     endif()
+endif()
+
+# --- Model file ---
+# GPU builds ship htdemucs.onnx; CPU builds prefer htdemucs_cpu.onnx with fallback.
+if (ORT_USE_GPU)
+    set(_MODEL_FILE "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs.onnx")
+else()
+    if (EXISTS "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs_cpu.onnx")
+        set(_MODEL_FILE "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs_cpu.onnx")
+    else()
+        set(_MODEL_FILE "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs.onnx")
+        message(STATUS "htdemucs_cpu.onnx not found — falling back to htdemucs.onnx for CPU build")
+    endif()
+endif()
+
+# On macOS app bundles the executable lives in Contents/MacOS/; models go in Contents/Resources/models/.
+# On Windows and Linux they live next to the binary, so models/ is a sibling of the exe.
+if (APPLE)
+    set(_MODEL_DEST "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>/../Resources/models")
+else()
+    set(_MODEL_DEST "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>/models")
+endif()
+
+if (EXISTS "${_MODEL_FILE}")
+    add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_MODEL_DEST}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_MODEL_FILE}" "${_MODEL_DEST}"
+        COMMENT "Copying model to ${_MODEL_DEST}")
+    message(STATUS "Model: ${_MODEL_FILE} → <exe>/models/")
+else()
+    message(WARNING "Model file not found at ${_MODEL_FILE} — ZIP distribution will be missing the model")
 endif()
