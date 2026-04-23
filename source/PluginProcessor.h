@@ -113,8 +113,7 @@ public:
     juce::String getStemErrorMessage() const;
     void requestStemSeparation (const juce::File& inputFile,
                                 const juce::File& modelFile,
-                                const juce::File& outputDir,
-                                bool useCuda = false);
+                                const juce::File& outputDir);
 
     //==============================================================================
     // UX contract: Analysis (stub: no result yet)

@@ -5,6 +5,9 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "AudioConversion.h"
 #include "demucs.hpp"
+#if defined(ORT_USE_GPU) && JUCE_WINDOWS
+ #include <dml_provider_factory.h>
+#endif
 #include <atomic>
 #include <fstream>
 #include <functional>
@@ -27,6 +30,9 @@ public:
     SeparationThread()
         : juce::Thread ("DemucsProcessing")
     {
+       #if defined(ORT_USE_GPU)
+        gpuEnabled = true;
+       #endif
     }
 
     ~SeparationThread() override
@@ -36,13 +42,11 @@ public:
 
     void configure (const juce::File& inputFile,
                     const juce::File& modelFile,
-                    const juce::File& outputDir,
-                    bool useCuda)
+                    const juce::File& outputDir)
     {
         this->inputFile = inputFile;
         this->modelFile = modelFile;
         this->outputDir = outputDir;
-        this->useCuda = useCuda;
     }
 
     void run() override
@@ -55,7 +59,7 @@ public:
 
         try
         {
-            // 1. Load ONNX model from file into memory, then pass to demucs.onnx
+            // 1. Configure ONNX session options
             statusMessage = "Loading model...";
             demucsonnx::demucs_model model;
 
@@ -65,30 +69,27 @@ public:
             opts.SetIntraOpNumThreads (0);
             opts.SetInterOpNumThreads (0);
 
-            if (useCuda)
-            {
-                OrtCUDAProviderOptions cudaOpts {};
-                cudaOpts.device_id = 0;
-                cudaOpts.arena_extend_strategy = 0;
-                cudaOpts.gpu_mem_limit = SIZE_MAX;
-                cudaOpts.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
-                cudaOpts.do_copy_in_default_stream = 1;
-                try
-                {
-                    opts.AppendExecutionProvider_CUDA (cudaOpts);
-                    gpuEnabled = true;
-                }
-                catch (const Ort::Exception&)
-                {
-                    gpuEnabled = false;
-                }
-            }
+           #if defined(ORT_USE_GPU)
+            #if JUCE_WINDOWS
+            // DirectML ships with Windows 10 1903+ — no extra driver installation required.
+            Ort::ThrowOnError (OrtSessionOptionsAppendExecutionProvider_DML (opts, 0));
+            #elif JUCE_MAC
+            opts.AppendExecutionProvider_CoreML (0);
+            #endif
+           #endif
 
-            if (threadShouldExit()) return;
-
+            // RAII: ensures model.sess is released whenever run() exits (cancel, error, or complete).
+            struct SessionGuard
             {
-                std::ifstream f (modelFile.getFullPathName().toStdString(),
-                                 std::ios::binary);
+                demucsonnx::demucs_model& m;
+                ~SessionGuard() { m.sess.reset(); }
+            } sessionGuard { model };
+
+            if (threadShouldExit()) { cancelCleanup(); return; }
+
+            // 2. Load model from file
+            {
+                std::ifstream f (modelFile.getFullPathName().toStdString(), std::ios::binary);
                 if (! f)
                 {
                     errorMessage = "Failed to open model: " + modelFile.getFileName();
@@ -106,9 +107,9 @@ public:
                 }
             }
 
-            if (threadShouldExit()) return;
+            if (threadShouldExit()) { cancelCleanup(); return; }
 
-            // 2. Load audio file via JUCE
+            // 3. Load audio file via JUCE
             status.store (Status::LoadingAudio);
             statusMessage = "Loading audio...";
 
@@ -129,7 +130,6 @@ public:
             int64_t rawLength = reader->lengthInSamples;
             int numChannels = static_cast<int> (reader->numChannels);
 
-            // Validate metadata from potentially malformed files
             if (sourceSampleRate <= 0.0)
             {
                 errorMessage = "Invalid sample rate in audio file: " + inputFile.getFileName();
@@ -152,7 +152,7 @@ public:
             reader->read (&audioBuffer, 0, numSamples, 0, true, true);
             reader.reset();
 
-            // 3. Resample if necessary
+            // 4. Resample if necessary
             if (static_cast<int> (sourceSampleRate) != demucsonnx::SUPPORTED_SAMPLE_RATE)
             {
                 status.store (Status::Resampling);
@@ -178,17 +178,15 @@ public:
                 numSamples = newNumSamples;
             }
 
-            // Convert to Eigen
             Eigen::MatrixXf eigenAudio = AudioConversion::juceToEigen (audioBuffer);
-            audioBuffer = juce::AudioBuffer<float>(); // free memory
+            audioBuffer = juce::AudioBuffer<float>(); // free memory early
 
-            if (threadShouldExit()) return;
+            if (threadShouldExit()) { cancelCleanup(); return; }
 
-            // 4. Run separation
+            // 5. Run separation
             status.store (Status::Processing);
             processingStartTime = juce::Time::getMillisecondCounterHiRes();
 
-            // demucs.onnx callback returns void; check cancellation after inference
             auto result = demucsonnx::demucs_inference (model, eigenAudio,
                 [this] (float p, const std::string& msg)
                 {
@@ -197,23 +195,13 @@ public:
                     updateETA (p);
                 });
 
-            if (threadShouldExit())
+            if (threadShouldExit() || result.size() == 0)
             {
-                statusMessage = "Cancelled.";
-                status.store (Status::Idle);
-                model.sess.reset();
+                cancelCleanup();
                 return;
             }
 
-            if (result.size() == 0)
-            {
-                statusMessage = "Cancelled.";
-                status.store (Status::Idle);
-                model.sess.reset();
-                return;
-            }
-
-            // 5. Write stems
+            // 6. Write stems
             status.store (Status::WritingStems);
             statusMessage = "Writing stems...";
             etaMessage = "";
@@ -227,7 +215,7 @@ public:
 
             for (int s = 0; s < nbSources && s < 6; ++s)
             {
-                if (threadShouldExit()) return;
+                if (threadShouldExit()) { cancelCleanup(); return; }
 
                 Eigen::MatrixXf stemData (2, outLen);
                 for (int ch = 0; ch < 2; ++ch)
@@ -252,9 +240,7 @@ public:
                     writer->writeFromAudioSampleBuffer (stemBuffer, 0, stemBuffer.getNumSamples());
             }
 
-            // 6. Explicitly release session to avoid CUDA cleanup crash
-            model.sess.reset();
-
+            // sessionGuard destructor releases the ONNX session here
             auto elapsed = (juce::Time::getMillisecondCounterHiRes() - startTime) / 1000.0;
             statusMessage = "Complete! (" + juce::String (elapsed, 1) + "s total)";
             status.store (Status::Complete);
@@ -277,7 +263,6 @@ private:
     juce::File inputFile;
     juce::File modelFile;
     juce::File outputDir;
-    bool useCuda = true;
     bool gpuEnabled = false;
 
     std::atomic<float> progress { 0.0f };
@@ -288,6 +273,14 @@ private:
 
     double startTime = 0.0;
     double processingStartTime = 0.0;
+
+    void cancelCleanup()
+    {
+        progress.store (0.0f);
+        etaMessage = "";
+        statusMessage = "Cancelled.";
+        status.store (Status::Idle);
+    }
 
     void updateETA (float p)
     {
