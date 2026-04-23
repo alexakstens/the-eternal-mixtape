@@ -20,4 +20,4 @@
 	branch = main
 [submodule "demucs.onnx"]
 	path = demucs.onnx
-	url = https://github.com/sevagh/demucs.onnx.git
+	url = https://github.com/bakerbass/demucs.onnx.git
