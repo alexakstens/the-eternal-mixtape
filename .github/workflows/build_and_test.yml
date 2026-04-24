@@ -153,6 +153,21 @@ jobs:
           echo "STANDALONE_DIR=$ARTIFACTS_PATH/Standalone" >> $GITHUB_ENV
           echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-${{ matrix.name }}" >> $GITHUB_ENV
 
+      - name: Copy model to output directory
+        run: |
+          if [[ "${{ matrix.ort-use-gpu }}" == "ON" ]]; then
+            MODEL=models/htdemucs.onnx
+          else
+            MODEL=models/htdemucs_cpu.onnx
+          fi
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            DEST="$STANDALONE_DIR/$PRODUCT_NAME.app/Contents/Resources/models"
+          else
+            DEST="$STANDALONE_DIR/models"
+          fi
+          mkdir -p "$DEST"
+          cp "$MODEL" "$DEST/"
+
       - name: Import Certificates (macOS)
         uses: sudara/basic-macos-keychain-action@v1
         id: keychain

@@ -240,13 +240,13 @@ include(Benchmarks)
 include(GitHubENV)
 
 # ============================================================
-# Post-build: copy ONNX Runtime DLLs + model into the output tree
+# Post-build: copy ONNX Runtime DLLs into the output tree (Windows only)
+# Model files are copied by the CI packaging step, not the build system.
 # ============================================================
 
 set(_STANDALONE_TARGET "${PROJECT_NAME}_Standalone")
 
 # --- ORT DLLs (Windows only) ---
-# DirectML ships with Windows 10 1903+ — no extra runtime DLLs required.
 if (WIN32)
     file(GLOB ORT_DLLS "${ORT_LIB_DIR}/*.dll")
     foreach(DLL ${ORT_DLLS})
@@ -260,38 +260,4 @@ if (WIN32)
     else()
         message(STATUS "CPU build: ORT DLLs will be copied from ${ORT_LIB_DIR}")
     endif()
-endif()
-
-# --- Model file ---
-# GPU builds ship htdemucs.onnx; CPU builds prefer htdemucs_cpu.onnx with fallback.
-# Both files live in models/ at the root of the main repo (Git LFS tracked).
-set(_MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/models")
-if (ORT_USE_GPU)
-    set(_MODEL_FILE "${_MODELS_DIR}/htdemucs.onnx")
-else()
-    if (EXISTS "${_MODELS_DIR}/htdemucs_cpu.onnx")
-        set(_MODEL_FILE "${_MODELS_DIR}/htdemucs_cpu.onnx")
-    else()
-        set(_MODEL_FILE "${_MODELS_DIR}/htdemucs.onnx")
-        message(STATUS "htdemucs_cpu.onnx not found — falling back to htdemucs.onnx for CPU build")
-    endif()
-endif()
-
-# On macOS app bundles the executable lives in Contents/MacOS/; models go in Contents/Resources/models/.
-# On Windows and Linux they live next to the binary, so models/ is a sibling of the exe.
-if (APPLE)
-    set(_MODEL_DEST "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>/../Resources/models")
-else()
-    set(_MODEL_DEST "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>/models")
-endif()
-
-if (EXISTS "${_MODEL_FILE}")
-    get_filename_component(_MODEL_FILENAME "${_MODEL_FILE}" NAME)
-    add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${_MODEL_DEST}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_MODEL_FILE}" "${_MODEL_DEST}/${_MODEL_FILENAME}"
-        COMMENT "Copying model to ${_MODEL_DEST}")
-    message(STATUS "Model: ${_MODEL_FILE} → <exe>/models/")
-else()
-    message(WARNING "Model file not found at ${_MODEL_FILE} — ZIP distribution will be missing the model")
 endif()
