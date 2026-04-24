@@ -18,7 +18,7 @@ env:
   SCCACHE_GHA_ENABLED: true
   SCCACHE_CACHE_MULTIARCH: 1
   SCCACHE_IDLE_TIMEOUT: 0
-  ORT_VERSION: "1.24.1"
+  ORT_VERSION: "1.23.0"
   ONNXRUNTIME_ROOT: ""  # set at runtime by the ORT download steps below
 
 defaults:
@@ -49,6 +49,7 @@ jobs:
             ort-pkg: onnxruntime-osx-universal2
             ort-ext: tgz
             ort-use-gpu: "ON"
+            # Note: ORT 1.24+ dropped universal2 — stay on 1.23.x or pick arm64-only with ort-pkg: onnxruntime-osx-arm64
           - name: Windows-CPU
             os: windows-latest
             ort-pkg: onnxruntime-win-x64
@@ -120,8 +121,19 @@ jobs:
           nuget install "${{ matrix.ort-nuget }}" -Version "${{ env.ORT_VERSION }}" -NonInteractive
           echo "ONNXRUNTIME_ROOT=${{ github.workspace }}/${{ matrix.ort-nuget }}.${{ env.ORT_VERSION }}" >> "$GITHUB_ENV"
 
+      # The GitHub Windows runner ships ORT 1.17.x system-wide. Adding our DLL directory
+      # to PATH ensures the correct version is loaded when CatchAddTests and ctest run executables.
+      - name: Add ORT DLLs to PATH (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          if [[ "${{ matrix.ort-use-gpu }}" == "ON" ]]; then
+            echo "${{ env.ONNXRUNTIME_ROOT }}/runtimes/win-x64/native" >> "$GITHUB_PATH"
+          else
+            echo "${{ env.ONNXRUNTIME_ROOT }}/lib" >> "$GITHUB_PATH"
+          fi
+
       - name: Configure
-        run: cmake -B ${{ env.BUILD_DIR }} -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE}} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DONNXRUNTIME_ROOT="${{ env.ONNXRUNTIME_ROOT }}" -DORT_USE_GPU=${{ matrix.ort-use-gpu }} ${{ matrix.extra-flags }} .
+        run: cmake -B ${{ env.BUILD_DIR }} -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE}} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DONNXRUNTIME_ROOT="${{ env.ONNXRUNTIME_ROOT }}" -DORT_USE_GPU=${{ matrix.ort-use-gpu }} -DDISCOVERY_MODE=DISCOVERY_MODE ${{ matrix.extra-flags }} .
 
       - name: Build
         run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }}

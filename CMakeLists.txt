@@ -61,6 +61,12 @@ else()
     set(ORT_LIB_DIR     "${ONNXRUNTIME_ROOT}/lib")
 endif()
 
+# On macOS, bake the ORT lib path into RPATH so all built executables (including
+# Tests and Benchmarks) can find libonnxruntime at run time without DYLD_LIBRARY_PATH.
+if (APPLE)
+    set(CMAKE_BUILD_RPATH "${ORT_LIB_DIR}")
+endif()
+
 # ORT include shim: demucs.onnx uses <onnxruntime/core/session/...> paths but
 # pre-built packages place headers at a flat level.
 set(ORT_COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source/ort-compat")
