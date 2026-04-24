@@ -233,8 +233,11 @@ include(PamplejuceIPP)
 # Everything related to the tests target
 include(Tests)
 
-# A separate target for Benchmarks
-include(Benchmarks)
+# Benchmarks: local dev only — excluded from CI because catch_discover_tests in
+# Benchmarks.cmake uses POST_BUILD mode and crashes Benchmarks.exe on Windows.
+if (NOT DEFINED ENV{CI})
+    include(Benchmarks)
+endif()
 
 # Output some config for CI
 include(GitHubENV)
