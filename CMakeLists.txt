@@ -282,9 +282,10 @@ else()
 endif()
 
 if (EXISTS "${_MODEL_FILE}")
+    get_filename_component(_MODEL_FILENAME "${_MODEL_FILE}" NAME)
     add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_MODEL_DEST}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_MODEL_FILE}" "${_MODEL_DEST}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_MODEL_FILE}" "${_MODEL_DEST}/${_MODEL_FILENAME}"
         COMMENT "Copying model to ${_MODEL_DEST}")
     message(STATUS "Model: ${_MODEL_FILE} → <exe>/models/")
 else()

@@ -74,7 +74,7 @@ public:
             // DirectML ships with Windows 10 1903+ — no extra driver installation required.
             Ort::ThrowOnError (OrtSessionOptionsAppendExecutionProvider_DML (opts, 0));
             #elif JUCE_MAC
-            opts.AppendExecutionProvider_CoreML (0);
+            opts.AppendExecutionProvider ("CoreML", {});
             #endif
            #endif
 

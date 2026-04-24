@@ -45,11 +45,10 @@ jobs:
             ort-use-gpu: "OFF"
           - name: macOS
             os: macos-14
-            extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-            ort-pkg: onnxruntime-osx-universal2
+            extra-flags: -G Ninja
+            ort-pkg: onnxruntime-osx-arm64
             ort-ext: tgz
             ort-use-gpu: "ON"
-            # Note: ORT 1.24+ dropped universal2 — stay on 1.23.x or pick arm64-only with ort-pkg: onnxruntime-osx-arm64
           - name: Windows-CPU
             os: windows-latest
             ort-pkg: onnxruntime-win-x64
