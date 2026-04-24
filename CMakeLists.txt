@@ -192,7 +192,7 @@ target_compile_definitions(SharedCode
     VERSION="${CURRENT_VERSION}"
     PRODUCT_NAME_WITHOUT_VERSION="TheEternalMixtape"
     TIMESTRETCH_USING_JUCE=1
-    DEMUCS_ONNX_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/demucs.onnx/onnx-models"
+    DEMUCS_ONNX_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/models"
     $<$<BOOL:${ORT_USE_GPU}>:ORT_USE_GPU=1>
 )
 
@@ -254,13 +254,15 @@ endif()
 
 # --- Model file ---
 # GPU builds ship htdemucs.onnx; CPU builds prefer htdemucs_cpu.onnx with fallback.
+# Both files live in models/ at the root of the main repo (Git LFS tracked).
+set(_MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/models")
 if (ORT_USE_GPU)
-    set(_MODEL_FILE "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs.onnx")
+    set(_MODEL_FILE "${_MODELS_DIR}/htdemucs.onnx")
 else()
-    if (EXISTS "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs_cpu.onnx")
-        set(_MODEL_FILE "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs_cpu.onnx")
+    if (EXISTS "${_MODELS_DIR}/htdemucs_cpu.onnx")
+        set(_MODEL_FILE "${_MODELS_DIR}/htdemucs_cpu.onnx")
     else()
-        set(_MODEL_FILE "${DEMUCS_ONNX_ROOT}/onnx-models/htdemucs.onnx")
+        set(_MODEL_FILE "${_MODELS_DIR}/htdemucs.onnx")
         message(STATUS "htdemucs_cpu.onnx not found — falling back to htdemucs.onnx for CPU build")
     endif()
 endif()

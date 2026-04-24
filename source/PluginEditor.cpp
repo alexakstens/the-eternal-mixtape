@@ -220,7 +220,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     // Model path resolution:
     // 1. <exe>/models/htdemucs_cpu.onnx (CPU build) or htdemucs.onnx (GPU build) — ZIP layout
     // 2. <exe>/models/htdemucs.onnx as universal fallback
-    // 3. Source-tree onnx-models/ via CMake define — dev build only
+    // 3. Source-tree models/ via CMake define — dev build only
     {
         auto exeDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
        #if JUCE_MAC
