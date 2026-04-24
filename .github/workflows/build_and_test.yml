@@ -153,7 +153,7 @@ jobs:
           echo "STANDALONE_DIR=$ARTIFACTS_PATH/Standalone" >> $GITHUB_ENV
           echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-${{ matrix.name }}" >> $GITHUB_ENV
 
-      - name: Copy model to output directory
+      - name: Copy model and ORT runtime to output directory
         run: |
           if [[ "${{ matrix.ort-use-gpu }}" == "ON" ]]; then
             MODEL=models/htdemucs.onnx
@@ -167,6 +167,15 @@ jobs:
           fi
           mkdir -p "$DEST"
           cp "$MODEL" "$DEST/"
+
+          # Copy ORT DLLs next to the exe on Windows (cmake post-build copy is unreliable in MSBuild)
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            if [[ "${{ matrix.ort-use-gpu }}" == "ON" ]]; then
+              cp "$ONNXRUNTIME_ROOT/runtimes/win-x64/native/"*.dll "$STANDALONE_DIR/"
+            else
+              cp "$ONNXRUNTIME_ROOT/lib/"*.dll "$STANDALONE_DIR/"
+            fi
+          fi
 
       - name: Import Certificates (macOS)
         uses: sudara/basic-macos-keychain-action@v1
