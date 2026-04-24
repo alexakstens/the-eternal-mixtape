@@ -9,6 +9,10 @@ include (CPM)
 
 # Configures universal binaries and decides which version of macOS to support
 include(PamplejuceMacOS)
+# PamplejuceMacOS forces arm64+x86_64 universal in CI — override since our ORT package is arm64-only
+if (APPLE)
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+endif()
 
 # Couple tweaks that IMO should be JUCE defaults
 include(JUCEDefaults)
