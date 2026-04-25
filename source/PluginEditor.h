@@ -58,6 +58,9 @@ private:
     juce::Label bpmLabel { {}, "BPM" };
     juce::Label densityLabel { {}, "DENSITY" };
 
+    // formatManager must be declared before any WaveformDisplay that takes a reference to it
+    juce::AudioFormatManager formatManager;
+
     // Splice output waveform (result of time-stretch remix)
     WaveformDisplay spliceOutputWaveform { formatManager, "Splice Output" };
     double spliceProgressValue = 0.0;
@@ -84,7 +87,6 @@ private:
     juce::TextButton recButton { "REC" };
 
     // Stem separation panel
-    juce::AudioFormatManager formatManager;
     juce::Label stemInputLabel  { {}, "Input:" };
     juce::Label stemModelLabel  { {}, "Model:" };
     juce::Label stemOutputLabel { {}, "Output:" };
