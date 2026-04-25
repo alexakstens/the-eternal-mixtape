@@ -137,6 +137,14 @@ jobs:
       - name: Build
         run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }}
 
+      - name: Upload PDB (Windows crash symbols)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v6
+        with:
+          name: PDB-${{ matrix.name }}
+          path: "${{ env.BUILD_DIR }}/**/*.pdb"
+          retention-days: 7
+
       - name: Test & Benchmarks
         working-directory: ${{ env.BUILD_DIR }}
         run: ctest --verbose --output-on-failure
@@ -246,6 +254,7 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}.zip
           path: "${{ env.STANDALONE_DIR }}/${{ env.ARTIFACT_NAME }}.zip"
+
 
   release:
     if: contains(github.ref, 'tags/v')
