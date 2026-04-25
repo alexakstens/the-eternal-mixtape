@@ -91,6 +91,9 @@ target_compile_features(demucs_onnx_core PUBLIC cxx_std_20)
 if (MSVC)
     target_compile_definitions(demucs_onnx_core PUBLIC NOMINMAX _USE_MATH_DEFINES)
     target_compile_options(demucs_onnx_core PRIVATE /W3 /wd4554 /wd4267 /wd4244)
+    # /Z7 (Embedded) embeds debug info in .obj for sccache compatibility but the linker
+    # still needs /DEBUG to emit a .pdb from that embedded info. Add it for all configs.
+    add_link_options(/DEBUG)
 endif()
 
 # ============================================================
