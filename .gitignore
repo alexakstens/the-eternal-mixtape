@@ -38,3 +38,55 @@ packaging/Output/*
 # Internal design docs (not pushed; see docs/UX_SUMMARY.md for shareable overview)
 docs/CPP_INTEGRATION_PLAN.md
 docs/UX_INTERFACE_DESIGN.md
+
+# =============================================================================
+# Large / binary assets (models, archives, local SDK drops)
+# =============================================================================
+*.onnx
+*.onnx.data
+*.ort
+*.plan
+*.engine
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+*.npy
+*.npz
+*.h5
+*.weights
+
+# Keep small test audio in-repo if needed; ignore heavy local drops at repo root only
+/*.wav
+/*.mp3
+/*.flac
+/*.aif
+/*.aiff
+
+# archives / installers often dropped during setup
+*.deb
+*.dmg
+*.msi
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# Demucs ONNX model pack (see demucs_README.md; install separately)
+demucs.onnx/onnx-models/
+
+# Prebuilt ONNX Runtime / cuDNN dumps if extracted next to the repo
+onnxruntime-*/
+cudnn*/
+cuda_*/
+
+# =============================================================================
+# Git submodules (.gitmodules pins commits; avoid clone-specific noise)
+# =============================================================================
+# Submodule trees: never `git add` large vendored dumps from the superproject.
+# Per-submodule CMake user presets (clone-specific; same idea as root CMakeUserPresets.json)
+JUCE/CMakeUserPresets.json
+demucs.onnx/CMakeUserPresets.json
+modules/**/CMakeUserPresets.json

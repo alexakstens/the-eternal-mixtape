@@ -43,22 +43,33 @@ set(ONNXRUNTIME_ROOT "C:/Users/ryanb/onnxruntime-win-x64-gpu-1.24.1" CACHE PATH
 # the pre-built Windows package places headers at a flat level.
 set(ORT_COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source/ort-compat")
 
-# Build demucs.onnx inference core as a static library (no CLI, no embedded models)
-file(GLOB DEMUCS_ONNX_SOURCES "${DEMUCS_ONNX_ROOT}/src/*.cpp")
-add_library(demucs_onnx_core STATIC ${DEMUCS_ONNX_SOURCES})
-target_include_directories(demucs_onnx_core PUBLIC
-    "${DEMUCS_ONNX_ROOT}/src"
-    "${DEMUCS_ONNX_ROOT}/vendor/eigen"
-    "${ONNXRUNTIME_ROOT}/include"
-    "${ORT_COMPAT_DIR}"
-)
-target_link_directories(demucs_onnx_core PUBLIC "${ONNXRUNTIME_ROOT}/lib")
-target_link_libraries(demucs_onnx_core PUBLIC onnxruntime)
-target_compile_features(demucs_onnx_core PUBLIC cxx_std_20)
+# Build demucs.onnx inference core as a static library (no CLI, no embedded models).
+# Set ENABLE_DEMUCS=OFF to build a stub interface lib instead — useful for UI-only
+# work on machines where ONNX Runtime / Eigen aren't available.
+option(ENABLE_DEMUCS "Build demucs.onnx inference core (requires ONNX Runtime + Eigen)" ON)
 
-if (MSVC)
-    target_compile_definitions(demucs_onnx_core PUBLIC NOMINMAX _USE_MATH_DEFINES)
-    target_compile_options(demucs_onnx_core PRIVATE /W3 /wd4554 /wd4267 /wd4244)
+if (ENABLE_DEMUCS)
+    file(GLOB DEMUCS_ONNX_SOURCES "${DEMUCS_ONNX_ROOT}/src/*.cpp")
+    add_library(demucs_onnx_core STATIC ${DEMUCS_ONNX_SOURCES})
+    target_include_directories(demucs_onnx_core PUBLIC
+        "${DEMUCS_ONNX_ROOT}/src"
+        "${DEMUCS_ONNX_ROOT}/vendor/eigen"
+        "${ONNXRUNTIME_ROOT}/include"
+        "${ORT_COMPAT_DIR}"
+    )
+    target_link_directories(demucs_onnx_core PUBLIC "${ONNXRUNTIME_ROOT}/lib")
+    target_link_libraries(demucs_onnx_core PUBLIC onnxruntime)
+    target_compile_features(demucs_onnx_core PUBLIC cxx_std_20)
+    target_compile_definitions(demucs_onnx_core PUBLIC ENABLE_DEMUCS=1)
+
+    if (MSVC)
+        target_compile_definitions(demucs_onnx_core PUBLIC NOMINMAX _USE_MATH_DEFINES)
+        target_compile_options(demucs_onnx_core PRIVATE /W3 /wd4554 /wd4267 /wd4244)
+    endif()
+else()
+    add_library(demucs_onnx_core INTERFACE)
+    target_compile_definitions(demucs_onnx_core INTERFACE ENABLE_DEMUCS=0)
+    message(STATUS "Demucs inference core: DISABLED (UI-only build). Stem separation will be a no-op.")
 endif()
 
 # ============================================================

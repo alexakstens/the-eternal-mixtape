@@ -3,8 +3,10 @@
 #include <juce_core/juce_core.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_basics/juce_audio_basics.h>
-#include "AudioConversion.h"
-#include "demucs.hpp"
+#if defined(ENABLE_DEMUCS) && ENABLE_DEMUCS
+    #include "AudioConversion.h"
+    #include "demucs.hpp"
+#endif
 #include <atomic>
 #include <fstream>
 #include <functional>
@@ -53,6 +55,12 @@ public:
         startTime = juce::Time::getMillisecondCounterHiRes();
         etaMessage = "";
 
+#if !defined(ENABLE_DEMUCS) || !ENABLE_DEMUCS
+        // UI-only build (configured with -DENABLE_DEMUCS=OFF).
+        errorMessage = "Stem separation is disabled in this build (UI-only).";
+        status.store (Status::Error);
+        return;
+#else
         try
         {
             // 1. Load ONNX model from file into memory, then pass to demucs.onnx
@@ -264,6 +272,7 @@ public:
             errorMessage = juce::String ("Error: ") + e.what();
             status.store (Status::Error);
         }
+#endif // ENABLE_DEMUCS
     }
 
     float getProgress() const { return progress.load(); }

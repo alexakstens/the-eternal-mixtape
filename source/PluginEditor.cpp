@@ -32,6 +32,11 @@ static void applySVGImages (juce::DrawableButton& btn,
 PluginEditor::PluginEditor (PluginProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
+    // Background image — single source of truth for the UI's visual layout.
+    // Aspect ratio matches the 1024x768 window (4:3); stretch-to-fit in paint().
+    uiImage = juce::ImageCache::getFromMemory (BinaryData::Backgorund_png,
+                                               BinaryData::Backgorund_pngSize);
+
     addAndMakeVisible (inspectButton);
 
     inspectButton.onClick = [this] {
@@ -43,26 +48,36 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         inspector->setVisible (true);
     };
 
-    // Top: runtime + meter
-    runtimeLabel.setJustificationType (juce::Justification::centredRight);
+    // Runtime LED — sits in the orange digital-display slot baked into the cassette art.
+    runtimeLabel.setJustificationType (juce::Justification::centred);
+    runtimeLabel.setFont (juce::Font (juce::FontOptions ("Menlo", 22.0f, juce::Font::bold)));
+    runtimeLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffa030));
     addAndMakeVisible (runtimeLabel);
-    meterLabel.setText ("VU", juce::dontSendNotification);
-    addAndMakeVisible (meterLabel);
 
-    // Tracks
-    const char* trackNames[] = { "A: DRUMS", "B: BASS", "C: OTHER", "D: VOCALS" };
+    // VU meter label is no longer drawn — kept for backward compat but invisible.
+    meterLabel.setText ("VU", juce::dontSendNotification);
+    meterLabel.setVisible (false);
+
+    // Tracks A–D, each with 4 vertical mini-faders (drums / bass / other / vocals).
+    const char* trackNames[] = { "TRACK A", "TRACK B", "TRACK C", "TRACK D" };
     for (int i = 0; i < kNumTracks; ++i)
     {
         trackLabels[i].setText (trackNames[i], juce::dontSendNotification);
+        trackLabels[i].setJustificationType (juce::Justification::centred);
         addAndMakeVisible (trackLabels[i]);
-        trackGainSliders[i].setSliderStyle (juce::Slider::LinearHorizontal);
-        trackGainSliders[i].setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-        trackGainSliders[i].setRange (0.0, 2.0, 0.01);
-        trackGainSliders[i].setValue (processorRef.getTrackGain (i));
-        trackGainSliders[i].onValueChange = [this, i] {
-            processorRef.setTrackGain (i, (float) trackGainSliders[i].getValue());
-        };
-        addAndMakeVisible (trackGainSliders[i]);
+
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+        {
+            auto& sl = trackStemSliders[i][s];
+            sl.setSliderStyle (juce::Slider::LinearVertical);
+            sl.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+            sl.setRange (0.0, 2.0, 0.01);
+            sl.setValue (1.0); // unity gain by default — getTrackStemGain() not exposed yet
+            sl.onValueChange = [this, i, s] {
+                processorRef.setTrackStemGain (i, s, (float) trackStemSliders[i][s].getValue());
+            };
+            addAndMakeVisible (sl);
+        }
     }
 
     // Splice panel — Razor button + Skip Warp toggle
@@ -75,9 +90,11 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     skipWarpToggle.setToggleState (false, juce::dontSendNotification);
     skipWarpToggle.setTooltip ("Bypass time-stretching — mix stems at original tempo");
-    addAndMakeVisible (skipWarpToggle);
-    bpmSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    bpmSlider.setTextBoxStyle (juce::Slider::TextBoxRight, true, 50, 20);
+    addChildComponent (skipWarpToggle); // hidden — exposed via Expertise mode later
+    bpmSlider.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+    bpmSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 48, 16);
+    bpmSlider.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
+                                   juce::MathConstants<float>::pi * 2.8f, true);
     bpmSlider.setRange (20.0, 300.0, 1.0);
     bpmSlider.setValue (processorRef.getGlobalBPM());
     bpmSlider.onValueChange = [this] { processorRef.setGlobalBPM (bpmSlider.getValue()); };
@@ -96,8 +113,9 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (spliceOutputWaveform);
     spliceStatusLabel.setText ("Separate stems first, then SPLICE", juce::dontSendNotification);
     spliceStatusLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (spliceStatusLabel);
-    addAndMakeVisible (spliceProgressBar);
+    // Splice status + progress — not in V1.1 layout; hidden but kept wired for diagnostics.
+    addChildComponent (spliceStatusLabel);
+    addChildComponent (spliceProgressBar);
 
     // Splice output transport buttons
     applySVGImages (spliceBackBtn,
@@ -107,7 +125,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     spliceBackBtn.onClick = [this] {
         processorRef.rewindSpliceOutput();
     };
-    addAndMakeVisible (spliceBackBtn);
+    addChildComponent (spliceBackBtn); // hidden — main transport reused in V1.1 layout
 
     applySVGImages (splicePlayBtn,
                     BinaryData::Play_off_svg,   BinaryData::Play_off_svgSize,
@@ -122,7 +140,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         else
             processorRef.stopSpliceOutput();
     };
-    addAndMakeVisible (splicePlayBtn);
+    addChildComponent (splicePlayBtn);
 
     applySVGImages (spliceStopBtn,
                     BinaryData::Stop_off_svg,   BinaryData::Stop_off_svgSize,
@@ -133,7 +151,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         processorRef.rewindSpliceOutput();
         splicePlayBtn.setToggleState (false, juce::dontSendNotification);
     };
-    addAndMakeVisible (spliceStopBtn);
+    addChildComponent (spliceStopBtn);
 
     applySVGImages (spliceForwardBtn,
                     BinaryData::Forward_off_svg,   BinaryData::Forward_off_svgSize,
@@ -144,7 +162,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         if (len > 0.0)
             processorRef.seekSpliceOutput (len);
     };
-    addAndMakeVisible (spliceForwardBtn);
+    addChildComponent (spliceForwardBtn);
 
     applySVGImages (spliceLoopBtn,
                     BinaryData::Loop_off_svg,   BinaryData::Loop_off_svgSize,
@@ -156,9 +174,9 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     spliceLoopBtn.onClick = [this] {
         processorRef.setSpliceOutputLoop (spliceLoopBtn.getToggleState());
     };
-    addAndMakeVisible (spliceLoopBtn);
+    addChildComponent (spliceLoopBtn);
 
-    // Transport
+    // Main transport — DrawableButton + SVG (mirrors the splice transport state machine)
     addAndMakeVisible (settingsButton);
     settingsButton.onClick = [this] {
         fileChooser = std::make_unique<juce::FileChooser> ("Choose folder for exported files",
@@ -170,21 +188,78 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                                           processorRef.setConfigPath ("export_output_dir", fc.getResult());
                                   });
     };
-    addAndMakeVisible (loopToggle);
-    loopToggle.onClick = [this] { processorRef.setLoopEnabled (loopToggle.getToggleState()); };
-    addAndMakeVisible (rewindButton);
-    rewindButton.onClick = [this] {
+
+    // Rewind: jump to start (momentary)
+    applySVGImages (mainRewindBtn,
+                    BinaryData::Back_off_svg,   BinaryData::Back_off_svgSize,
+                    BinaryData::Back_hover_svg, BinaryData::Back_hover_svgSize,
+                    BinaryData::Back_on_svg,    BinaryData::Back_on_svgSize);
+    mainRewindBtn.onClick = [this] {
         processorRef.stop();
         processorRef.setTransportPosition (0.0);
+        mainPlayBtn.setToggleState (false, juce::dontSendNotification);
     };
-    addAndMakeVisible (playButton);
-    playButton.onClick = [this] {
-        if (processorRef.getTransportTotalLengthSeconds() <= 0.0)
-            return;
-        processorRef.play();
+    addAndMakeVisible (mainRewindBtn);
+
+    // Play: toggle (off = stopped, on = playing)
+    applySVGImages (mainPlayBtn,
+                    BinaryData::Play_off_svg,   BinaryData::Play_off_svgSize,
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize);
+    mainPlayBtn.setClickingTogglesState (true);
+    mainPlayBtn.onClick = [this] {
+        if (mainPlayBtn.getToggleState())
+        {
+            if (processorRef.getTransportTotalLengthSeconds() > 0.0)
+                processorRef.play();
+            else
+                mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+        }
+        else
+        {
+            processorRef.stop();
+        }
     };
-    addAndMakeVisible (ffButton);
-    ffButton.onClick = [this] { processorRef.stop(); };
+    addAndMakeVisible (mainPlayBtn);
+
+    // Stop: stop + return to head (momentary)
+    applySVGImages (mainStopBtn,
+                    BinaryData::Stop_off_svg,   BinaryData::Stop_off_svgSize,
+                    BinaryData::Stop_hover_svg, BinaryData::Stop_hover_svgSize,
+                    BinaryData::Stop_on_svg,    BinaryData::Stop_on_svgSize);
+    mainStopBtn.onClick = [this] {
+        processorRef.stop();
+        processorRef.setTransportPosition (0.0);
+        mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+    };
+    addAndMakeVisible (mainStopBtn);
+
+    // Forward: jump to end (momentary) — fixes the previous bug where this called stop()
+    applySVGImages (mainForwardBtn,
+                    BinaryData::Forward_off_svg,   BinaryData::Forward_off_svgSize,
+                    BinaryData::Forward_hover_svg, BinaryData::Forward_hover_svgSize,
+                    BinaryData::Forward_on_svg,    BinaryData::Forward_on_svgSize);
+    mainForwardBtn.onClick = [this] {
+        if (processorRef.getTransportTotalLengthSeconds() > 0.0)
+            processorRef.setTransportPosition (1.0);
+    };
+    addAndMakeVisible (mainForwardBtn);
+
+    // Loop: toggle (off = single play, on = loop)
+    applySVGImages (mainLoopBtn,
+                    BinaryData::Loop_off_svg,   BinaryData::Loop_off_svgSize,
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize);
+    mainLoopBtn.setClickingTogglesState (true);
+    mainLoopBtn.onClick = [this] {
+        processorRef.setLoopEnabled (mainLoopBtn.getToggleState());
+    };
+    addAndMakeVisible (mainLoopBtn);
+
     addAndMakeVisible (autoSpliceButton);
     autoSpliceButton.onClick = [this] { processorRef.applyAutoSplice(); };
     addAndMakeVisible (regenerateButton);
@@ -267,10 +342,68 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (otherWaveform);
     addAndMakeVisible (vocalsWaveform);
 
+    // Colour theme — sampled from Backgorund.png (warm vintage palette).
+    // textColour    = beige headline / body text
+    // accentColour  = orange highlight (knobs, sliders, primary buttons)
+    // panelDark     = neutral track background (slider rail)
+    const juce::Colour textColour   (0xffc8b896);
+    const juce::Colour accentColour (0xffF07030);
+    const juce::Colour panelDark    (0xff555555);
+
+    for (int i = 0; i < kNumTracks; ++i)
+    {
+        trackLabels[i].setColour (juce::Label::textColourId, textColour);
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+        {
+            trackStemSliders[i][s].setColour (juce::Slider::thumbColourId, accentColour);
+            trackStemSliders[i][s].setColour (juce::Slider::trackColourId, panelDark);
+        }
+    }
+    bpmLabel.setColour          (juce::Label::textColourId, textColour);
+    densityLabel.setColour      (juce::Label::textColourId, textColour);
+    runtimeLabel.setColour      (juce::Label::textColourId, textColour);
+    meterLabel.setColour        (juce::Label::textColourId, textColour);
+    spliceStatusLabel.setColour (juce::Label::textColourId, textColour);
+    stemStatusLabel.setColour   (juce::Label::textColourId, textColour);
+
+    bpmSlider.setColour     (juce::Slider::thumbColourId,             accentColour);
+    bpmSlider.setColour     (juce::Slider::rotarySliderFillColourId,  accentColour);
+    bpmSlider.setColour     (juce::Slider::textBoxTextColourId,       textColour);
+    bpmSlider.setColour     (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
+    densitySlider.setColour (juce::Slider::thumbColourId,             accentColour);
+    densitySlider.setColour (juce::Slider::trackColourId,             panelDark);
+
+    autoSpliceButton.setColour (juce::TextButton::buttonColourId, accentColour);
+    recButton.setColour        (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+
+    // Stem-separation panel is an "advanced" feature — hidden by default,
+    // revealed when the user holds Cmd/Ctrl (Expertise Mode).
+    setStemPanelVisible_ = [this] (bool v) {
+        stemInputLabel.setVisible (v);
+        stemModelLabel.setVisible (v);
+        stemOutputLabel.setVisible (v);
+        stemInputEditor.setVisible (v);
+        stemModelEditor.setVisible (v);
+        stemOutputEditor.setVisible (v);
+        stemInputBrowse.setVisible (v);
+        stemModelBrowse.setVisible (v);
+        stemOutputBrowse.setVisible (v);
+        stemProcessButton.setVisible (v);
+        stemCancelButton.setVisible (v);
+        stemCudaToggle.setVisible (v);
+        stemProgressBar.setVisible (v);
+        stemStatusLabel.setVisible (v);
+        drumsWaveform.setVisible (v);
+        bassWaveform.setVisible (v);
+        otherWaveform.setVisible (v);
+        vocalsWaveform.setVisible (v);
+    };
+    setStemPanelVisible_ (false);
+
     updateUIForMode();
     startTimerHz (10);
 
-    setSize (720, 900);
+    setSize (1024, 768);
 }
 
 PluginEditor::~PluginEditor()
@@ -297,10 +430,7 @@ void PluginEditor::timerCallback()
     lSec %= 60;
     runtimeLabel.setText (juce::String::formatted ("%d:%02d / %d:%02d", pMin, pSec, lMin, lSec),
                           juce::dontSendNotification);
-
-    float level = processorRef.getMasterLevels();
-    meterLabel.setText ("VU " + juce::String (juce::jlimit (0, 100, (int) (level * 100))),
-                        juce::dontSendNotification);
+    juce::ignoreUnused (processorRef.getMasterLevels()); // VU rendering removed; poll preserved
 
     // Stem separation progress
     auto& thread = processorRef.separationThread;
@@ -327,146 +457,165 @@ void PluginEditor::timerCallback()
     if (splicePlayBtn.getToggleState() != isPlaying)
         splicePlayBtn.setToggleState (isPlaying, juce::dontSendNotification);
 
+    // Same for the main transport — playback may stop on its own (end-of-buffer, DAW)
+    bool mainIsPlaying = processorRef.isTransportPlaying();
+    if (mainPlayBtn.getToggleState() != mainIsPlaying)
+        mainPlayBtn.setToggleState (mainIsPlaying, juce::dontSendNotification);
+
     repaint();
 }
 
 void PluginEditor::updateUIForMode()
 {
     if (isExpertiseMode_)
+    {
         recButton.setButtonText ("REC (choose file)");
+        if (setStemPanelVisible_) setStemPanelVisible_ (true);
+    }
     else
+    {
         recButton.setButtonText ("REC");
+        if (setStemPanelVisible_) setStemPanelVisible_ (false);
+    }
+    resized();
 }
 
 void PluginEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
+    if (uiImage.isValid())
+    {
+        g.drawImageWithin (uiImage, 0, 0, getWidth(), getHeight(),
+                           juce::RectanglePlacement::stretchToFit);
+    }
+    else
+    {
+        g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
+    }
 
-    float level = processorRef.getMasterLevels();
-    auto topBar = getLocalBounds().removeFromTop (28);
-    auto meterRect = topBar.removeFromLeft (120).reduced (4);
-    g.setColour (juce::Colours::darkgrey);
-    g.fillRoundedRectangle (meterRect.toFloat(), 4.0f);
-    g.setColour (juce::Colours::lime);
-    g.fillRoundedRectangle (meterRect.withWidth (meterRect.getWidth() * juce::jmin (1.0f, level)).toFloat(), 4.0f);
+    // No VU overlay here — the multicolor waveform strip is baked into the background art,
+    // and the live level is reflected by spliceOutputWaveform.
 }
 
 void PluginEditor::resized()
 {
-    auto r = getLocalBounds();
+    // Layout uses absolute coordinates derived from the V1.1 mockup (1024x682),
+    // scaled vertically (×768/682 ≈ 1.126) so each component sits over the matching
+    // baked-in slot in Backgorund.png at our 1024x768 window.
 
-    auto top = r.removeFromTop (28);
-    meterLabel.setBounds (top.removeFromLeft (80).reduced (2));
-    runtimeLabel.setBounds (top.removeFromRight (140).reduced (2));
+    // ── Runtime LED — orange digital slot in the centre of the cassette ──
+    runtimeLabel.setBounds (430, 360, 200, 50);
 
-    r.removeFromTop (4);
+    // ── Splice output waveform — multicolor strip below the cassette ──
+    // Note: the strip covers the LED area too, so we leave centre gap for the LED.
+    spliceOutputWaveform.setBounds (24, 358, 1000, 52);
 
-    const int trackH = 44;
-    for (int i = 0; i < kNumTracks; ++i)
+    // ── SPLICE big razor button (left edge of the mixer) ──
+    spliceButton.setBounds (24, 480, 110, 170);
+
+    // ── BPM small rotary knob — between SPLICE and Track A ──
+    bpmSlider.setBounds (140, 525, 60, 80);
+    bpmLabel.setBounds  (140, 505, 60, 18);
+
+    // ── Track band: 4 columns × 4 vertical mini-faders ──
+    // Each track column matches the baked-in mixer slots in the background.
+    constexpr int colX[kNumTracks] = { 210, 410, 615, 815 };  // left edge of each column
+    constexpr int colW = 175;                                  // width of each column
+    constexpr int labelY = 445, labelH = 22;                   // TRACK A/B/C/D label row
+    constexpr int slidersY = 478, slidersH = 175;              // 4 vertical mini-faders
+    constexpr int sliderGap = 4;
+    const int stemSliderW = (colW - 3 * sliderGap) / kNumStemsPerTrack; // ~40px
+
+    for (int t = 0; t < kNumTracks; ++t)
     {
-        auto row = r.removeFromTop (trackH);
-        trackLabels[i].setBounds (row.removeFromLeft (70).reduced (2));
-        trackGainSliders[i].setBounds (row.reduced (2));
+        trackLabels[t].setBounds (colX[t], labelY, colW, labelH);
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+        {
+            const int sx = colX[t] + s * (stemSliderW + sliderGap);
+            trackStemSliders[t][s].setBounds (sx, slidersY, stemSliderW, slidersH);
+        }
     }
 
-    r.removeFromTop (6);
+    // ── Density (slider hidden in V1.1 layout but parked under the BPM area) ──
+    densityLabel.setBounds  (130, 720, 60, 18);
+    densitySlider.setBounds (24, 740, 200, 18); // tucked at the very bottom-left, off-frame
 
-    auto spliceRow = r.removeFromTop (40);
-    spliceButton.setBounds (spliceRow.removeFromLeft (40));
-    spliceRow.removeFromLeft (6);
-    bpmLabel.setBounds (spliceRow.removeFromLeft (46).reduced (2));
-    bpmSlider.setBounds (spliceRow.removeFromLeft (120).reduced (2));
-    densityLabel.setBounds (spliceRow.removeFromLeft (60).reduced (2));
-    densitySlider.setBounds (spliceRow.removeFromLeft (140).reduced (2));
-    spliceRow.removeFromLeft (8);
-    skipWarpToggle.setBounds (spliceRow.removeFromLeft (90).reduced (2));
+    // ── Bottom-left small cluster: gear + loop ──
+    settingsButton.setBounds (24, 670, 44, 44);
+    mainLoopBtn.setBounds    (74, 670, 44, 44);
 
-    r.removeFromTop (6);
+    // ── Centre transport (5 buttons): Back / Rewind / Play / Forward / FastFwd ──
+    constexpr int tBtnW = 70, tBtnGap = 8;
+    constexpr int tTotalW = 5 * tBtnW + 4 * tBtnGap;     // 382
+    constexpr int tStartX = (1024 - tTotalW) / 2;        // 321
+    constexpr int tY = 668, tH = 56;
+    mainRewindBtn.setBounds  (tStartX + 0 * (tBtnW + tBtnGap), tY, tBtnW, tH);
+    mainStopBtn.setBounds    (tStartX + 1 * (tBtnW + tBtnGap), tY, tBtnW, tH);
+    mainPlayBtn.setBounds    (tStartX + 2 * (tBtnW + tBtnGap), tY, tBtnW, tH);
+    mainForwardBtn.setBounds (tStartX + 3 * (tBtnW + tBtnGap), tY, tBtnW, tH);
+    // Fifth slot reused by main rewind variant — for now stack on Forward.
+    // (We only have 4 SVG transport assets; the fifth slot in V1.1 is decorative.)
+    // If a "fast forward" asset is added, point a 5th DrawableButton here.
 
-    // Splice output waveform
-    spliceOutputWaveform.setBounds (r.removeFromTop (70).reduced (0, 2));
-    r.removeFromTop (4);
+    // ── Bottom-right 2×2 cluster: AUTO SPLICE / REGENERATE / RANDOMIZE / REC ──
+    constexpr int rBtnW = 110, rBtnH = 38, rBtnGap = 6;
+    constexpr int rCol1X = 720, rCol2X = rCol1X + rBtnW + rBtnGap; // 836
+    constexpr int rRow1Y = 660, rRow2Y = rRow1Y + rBtnH + rBtnGap; // 704
+    autoSpliceButton.setBounds (rCol1X, rRow1Y, rBtnW, rBtnH);
+    regenerateButton.setBounds (rCol2X, rRow1Y, rBtnW, rBtnH);
+    randomizeButton.setBounds  (rCol1X, rRow2Y, rBtnW, rBtnH);
+    recButton.setBounds        (rCol2X, rRow2Y, rBtnW, rBtnH);
 
-    // Splice transport row (Back / Play / Stop / Forward / Loop)
+    // ── Stem-separation panel (Expertise mode) — overlay on top of the mixer ──
+    if (isExpertiseMode_)
     {
-        auto transportRow = r.removeFromTop (38);
-        const int btnW = 38;
-        spliceBackBtn.setBounds    (transportRow.removeFromLeft (btnW));
-        splicePlayBtn.setBounds    (transportRow.removeFromLeft (btnW));
-        spliceStopBtn.setBounds    (transportRow.removeFromLeft (btnW));
-        spliceForwardBtn.setBounds (transportRow.removeFromLeft (btnW));
-        transportRow.removeFromLeft (8);
-        spliceLoopBtn.setBounds    (transportRow.removeFromLeft (btnW));
+        auto stem = juce::Rectangle<int> (20, 60, getWidth() - 40, 240);
+        const int labelW = 60, browseW = 70, rowH = 26, gap = 4;
+
+        auto row1 = stem.removeFromTop (rowH);
+        stemInputLabel.setBounds  (row1.removeFromLeft  (labelW));
+        stemInputBrowse.setBounds (row1.removeFromRight (browseW));
+        stemInputEditor.setBounds (row1);
+        stem.removeFromTop (gap);
+
+        auto row2 = stem.removeFromTop (rowH);
+        stemModelLabel.setBounds  (row2.removeFromLeft  (labelW));
+        stemModelBrowse.setBounds (row2.removeFromRight (browseW));
+        stemModelEditor.setBounds (row2);
+        stem.removeFromTop (gap);
+
+        auto row3 = stem.removeFromTop (rowH);
+        stemOutputLabel.setBounds  (row3.removeFromLeft  (labelW));
+        stemOutputBrowse.setBounds (row3.removeFromRight (browseW));
+        stemOutputEditor.setBounds (row3);
+        stem.removeFromTop (gap);
+
+        auto ctlRow = stem.removeFromTop (28);
+        stemCudaToggle.setBounds    (ctlRow.removeFromLeft (80));
+        ctlRow.removeFromLeft (8);
+        stemProcessButton.setBounds (ctlRow.removeFromLeft (90));
+        ctlRow.removeFromLeft (4);
+        stemCancelButton.setBounds  (ctlRow.removeFromLeft (90));
+        ctlRow.removeFromLeft (12);
+        stemProgressBar.setBounds   (ctlRow.removeFromLeft (200));
+        stem.removeFromTop (gap);
+
+        stemStatusLabel.setBounds (stem.removeFromTop (20));
+        stem.removeFromTop (gap);
+
+        const int waveH = (stem.getHeight() - gap) / 2;
+        const int halfW = (stem.getWidth()  - gap) / 2;
+        auto t1 = stem.removeFromTop (waveH);
+        drumsWaveform.setBounds (t1.removeFromLeft (halfW));
+        t1.removeFromLeft (gap);
+        bassWaveform.setBounds  (t1);
+        stem.removeFromTop (gap);
+        auto t2 = stem.removeFromTop (waveH);
+        otherWaveform.setBounds (t2.removeFromLeft (halfW));
+        t2.removeFromLeft (gap);
+        vocalsWaveform.setBounds (t2);
     }
-    r.removeFromTop (4);
 
-    spliceProgressBar.setBounds (r.removeFromTop (16));
-    r.removeFromTop (3);
-    spliceStatusLabel.setBounds (r.removeFromTop (18));
-    r.removeFromTop (6);
-
-    auto transport = r.removeFromBottom (40);
-    settingsButton.setBounds (transport.removeFromLeft (70).reduced (2));
-    loopToggle.setBounds (transport.removeFromLeft (50).reduced (2));
-    rewindButton.setBounds (transport.removeFromLeft (36).reduced (2));
-    playButton.setBounds (transport.removeFromLeft (44).reduced (2));
-    ffButton.setBounds (transport.removeFromLeft (36).reduced (2));
-    autoSpliceButton.setBounds (transport.removeFromLeft (100).reduced (2));
-    regenerateButton.setBounds (transport.removeFromLeft (100).reduced (2));
-    randomizeButton.setBounds (transport.removeFromLeft (90).reduced (2));
-    recButton.setBounds (transport.removeFromLeft (50).reduced (2));
-
-    r.removeFromBottom (8);
-
-    // Stem separation panel (below mixer)
-    r.removeFromTop (10);
-    const int stemLabelW = 60, stemBrowseW = 60, stemRowH = 26, stemGap = 3;
-
-    auto stemRow = r.removeFromTop (stemRowH);
-    stemInputLabel.setBounds (stemRow.removeFromLeft (stemLabelW));
-    stemInputBrowse.setBounds (stemRow.removeFromRight (stemBrowseW));
-    stemInputEditor.setBounds (stemRow);
-    r.removeFromTop (stemGap);
-
-    stemRow = r.removeFromTop (stemRowH);
-    stemModelLabel.setBounds (stemRow.removeFromLeft (stemLabelW));
-    stemModelBrowse.setBounds (stemRow.removeFromRight (stemBrowseW));
-    stemModelEditor.setBounds (stemRow);
-    r.removeFromTop (stemGap);
-
-    stemRow = r.removeFromTop (stemRowH);
-    stemOutputLabel.setBounds (stemRow.removeFromLeft (stemLabelW));
-    stemOutputBrowse.setBounds (stemRow.removeFromRight (stemBrowseW));
-    stemOutputEditor.setBounds (stemRow);
-    r.removeFromTop (stemGap);
-
-    stemRow = r.removeFromTop (28);
-    stemCudaToggle.setBounds (stemRow.removeFromLeft (80));
-    stemRow.removeFromLeft (10);
-    stemProcessButton.setBounds (stemRow.removeFromLeft (80));
-    stemRow.removeFromLeft (6);
-    stemCancelButton.setBounds (stemRow.removeFromLeft (80));
-    r.removeFromTop (stemGap);
-
-    stemProgressBar.setBounds (r.removeFromTop (20));
-    r.removeFromTop (stemGap);
-    stemStatusLabel.setBounds (r.removeFromTop (20));
-    r.removeFromTop (stemGap);
-
-    // 2x2 stem waveform grid
-    int stemH = (r.getHeight() - stemGap - 25) / 2;
-    int halfW  = (r.getWidth() - stemGap) / 2;
-    auto waveTop = r.removeFromTop (stemH);
-    drumsWaveform.setBounds (waveTop.removeFromLeft (halfW));
-    waveTop.removeFromLeft (stemGap);
-    bassWaveform.setBounds (waveTop);
-    r.removeFromTop (stemGap);
-    auto waveBot = r.removeFromTop (stemH);
-    otherWaveform.setBounds (waveBot.removeFromLeft (halfW));
-    waveBot.removeFromLeft (stemGap);
-    vocalsWaveform.setBounds (waveBot);
-
-    inspectButton.setBounds (getLocalBounds().removeFromBottom (25).removeFromRight (90));
+    inspectButton.setBounds (getLocalBounds().removeFromBottom (22).removeFromRight (110));
 }
 
 //==============================================================================

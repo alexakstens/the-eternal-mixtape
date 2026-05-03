@@ -275,6 +275,11 @@ void PluginProcessor::stop()
     isPlaying_ = false;
 }
 
+bool PluginProcessor::isTransportPlaying() const
+{
+    return isPlaying_;
+}
+
 void PluginProcessor::setTransportPosition (double ratio)
 {
     transportPosition_ = juce::jlimit (0.0, 1.0, ratio);
@@ -439,14 +444,21 @@ void PluginProcessor::requestSplice (const juce::File& stemsDir,
 
 void PluginProcessor::applyAutoSplice()
 {
+    if (lastStemOutputDir_ == juce::File{}) return;
+    requestSplice (lastStemOutputDir_, 0.0, globalBPM_, false, spliceDensity_);
 }
 
 void PluginProcessor::regenerateMix()
 {
+    if (lastStemOutputDir_ == juce::File{}) return;
+    requestSplice (lastStemOutputDir_, 0.0, globalBPM_, false, spliceDensity_);
 }
 
 void PluginProcessor::randomizeMix()
 {
+    if (lastStemOutputDir_ == juce::File{}) return;
+    spliceDensity_ = juce::Random::getSystemRandom().nextFloat();
+    requestSplice (lastStemOutputDir_, 0.0, globalBPM_, false, spliceDensity_);
 }
 
 void PluginProcessor::startRecording()

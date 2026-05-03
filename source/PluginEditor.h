@@ -45,10 +45,12 @@ private:
     juce::Label runtimeLabel;
     juce::Label meterLabel;
 
-    // Tracks A–D: label + gain slider
+    // Tracks A–D: each has a label + 4 vertical stem mini-faders
+    // (drums / bass / other / vocals — matching the icons baked into the background).
     static constexpr int kNumTracks = 4;
-    juce::Label trackLabels[kNumTracks];
-    juce::Slider trackGainSliders[kNumTracks];
+    static constexpr int kNumStemsPerTrack = 4;
+    juce::Label  trackLabels[kNumTracks];
+    juce::Slider trackStemSliders[kNumTracks][kNumStemsPerTrack];
 
     // Splice panel
     juce::DrawableButton spliceButton  { "Razor",     juce::DrawableButton::ImageFitted };
@@ -72,16 +74,20 @@ private:
     juce::DrawableButton spliceForwardBtn { "Forward", juce::DrawableButton::ImageFitted };
     juce::DrawableButton spliceLoopBtn    { "Loop",    juce::DrawableButton::ImageFitted };
 
-    // Transport
+    // Main transport — DrawableButton + SVG (replaces old TextButtons)
     juce::TextButton settingsButton { "Settings" };
-    juce::ToggleButton loopToggle { "Loop" };
-    juce::TextButton rewindButton { "<<" };
-    juce::TextButton playButton { "Play" };
-    juce::TextButton ffButton { ">>" };
+    juce::DrawableButton mainRewindBtn  { "MainBack",    juce::DrawableButton::ImageFitted };
+    juce::DrawableButton mainPlayBtn    { "MainPlay",    juce::DrawableButton::ImageFitted };
+    juce::DrawableButton mainStopBtn    { "MainStop",    juce::DrawableButton::ImageFitted };
+    juce::DrawableButton mainForwardBtn { "MainForward", juce::DrawableButton::ImageFitted };
+    juce::DrawableButton mainLoopBtn    { "MainLoop",    juce::DrawableButton::ImageFitted };
     juce::TextButton autoSpliceButton { "AUTO SPLICE" };
     juce::TextButton regenerateButton { "REGENERATE" };
     juce::TextButton randomizeButton { "RANDOMIZE" };
     juce::TextButton recButton { "REC" };
+
+    // Toggles visibility of the stem-separation panel; used by Expertise mode.
+    std::function<void(bool)> setStemPanelVisible_;
 
     // Stem separation panel
     juce::AudioFormatManager formatManager;

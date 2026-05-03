@@ -57,6 +57,7 @@ public:
     void setTransportPosition (double ratio);
     double getTransportPositionSeconds() const;
     double getTransportTotalLengthSeconds() const;
+    bool isTransportPlaying() const;
     void setLoopEnabled (bool enabled);
     void setLoopRegion (double startSec, double endSec);
 
