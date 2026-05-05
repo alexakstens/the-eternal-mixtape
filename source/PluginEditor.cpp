@@ -37,6 +37,15 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     uiImage = juce::ImageCache::getFromMemory (BinaryData::Backgorund_png,
                                                BinaryData::Backgorund_pngSize);
 
+    // Tape title art — band below baked-in header copy (see resized()).
+    {
+        auto tape = juce::ImageCache::getFromMemory (BinaryData::tape_png,
+                                                     BinaryData::tape_pngSize);
+        tapeHeadlineImage.setImage (tape, juce::RectanglePlacement::centred
+                                          | juce::RectanglePlacement::onlyReduceInSize);
+        addAndMakeVisible (tapeHeadlineImage); // behind later controls (added first)
+    }
+
     addAndMakeVisible (inspectButton);
 
     inspectButton.onClick = [this] {
@@ -566,6 +575,14 @@ void PluginEditor::paint (juce::Graphics& g)
 
 void PluginEditor::resized()
 {
+    // Tape headline — y offset below top, 72 px side margins, 240 px tall band
+    constexpr int kTapeHeadlinePad = 72;
+    constexpr int kTapeHeadlineY   = 90; // clear baked-in header copy above the tape art
+    constexpr int kTapeHeadlineH   = 240;
+    tapeHeadlineImage.setBounds (kTapeHeadlinePad, kTapeHeadlineY,
+                                 juce::jmax (0, getWidth() - 2 * kTapeHeadlinePad),
+                                 kTapeHeadlineH);
+
     // ── Layout constants ─────────────────────────────────────────────────────────
     // Left gutter: SPLICE razor + BPM knob (x = 0..119)
     constexpr int kGutterW = 120;
@@ -575,6 +592,9 @@ void PluginEditor::resized()
     constexpr int kTrack0X      = kGutterW + kTrackBankPinch;
     constexpr int kTrackBankW   = (1024 - kGutterW) - 2 * kTrackBankPinch;
     constexpr int kColW         = kTrackBankW / kNumTracks;
+    // Nudge track headers + stem icons + faders (not waveforms; not SPLICE/BPM vertical position).
+    constexpr int kTrackControlsShiftX = 5;
+    constexpr int kTrackControlsShiftY = 10; // not applied to SPLICE razor / BPM row
 
     // ── Y zones (top of mixer area at y=356) ──────────────────────────────────
     // Per-track input waveform windows (one per track, always visible)
@@ -601,13 +621,15 @@ void PluginEditor::resized()
     spliceOutputWaveform.setBounds (kTrack0X, kSpliceY, kTrackBankW, 34);
 
     // Track label icons (trackA/B/C/D.png) — below splice output
-    constexpr int kIconY = kSpliceY + 34 + 4; // 454
+    constexpr int kIconYBase = kSpliceY + 34 + 4;
+    constexpr int kIconY     = kIconYBase + kTrackControlsShiftY;
     constexpr int kIconH = 28;
     for (int t = 0; t < kNumTracks; ++t)
-        trackLabelIcons[t].setBounds (kTrack0X + t*kColW + 4, kIconY, kColW - 8, kIconH);
+        trackLabelIcons[t].setBounds (kTrack0X + t*kColW + 4 + kTrackControlsShiftX, kIconY,
+                                      kColW - 8, kIconH);
 
     // Stem icons (vocal/bass/others/drum) — one per fader, above the fader
-    constexpr int kStemIconY = kIconY + kIconH + 2; // 484
+    constexpr int kStemIconY = kIconY + kIconH + 2;
     constexpr int kStemIconH = 28; // tall enough for scaled full artwork
     constexpr int kFaderW    = 44, kFaderGap = 3;
     // Side padding inside each column pulls Track A’s left edge right and Track D’s right edge left
@@ -615,7 +637,7 @@ void PluginEditor::resized()
     constexpr int kGroupW    = kNumStemsPerTrack * kFaderW + (kNumStemsPerTrack-1) * kFaderGap;
     for (int t = 0; t < kNumTracks; ++t)
     {
-        const int gx = kTrack0X + t*kColW + kColHPad
+        const int gx = kTrack0X + t*kColW + kColHPad + kTrackControlsShiftX
                        + (kColW - 2*kColHPad - kGroupW) / 2;
         for (int s = 0; s < kNumStemsPerTrack; ++s)
             stemIcons[t][s].setBounds (gx + s*(kFaderW + kFaderGap), kStemIconY,
@@ -623,11 +645,13 @@ void PluginEditor::resized()
     }
 
     // Stem faders — vertical, shorter than before
-    constexpr int kFaderY = kStemIconY + kStemIconH + 2; // 506
+    constexpr int kFaderY = kStemIconY + kStemIconH + 2;
     constexpr int kFaderH = 88;
+    // SPLICE razor + BPM: original row (no kTrackControlsShiftY) — only headers/icons/sliders shift
+    constexpr int kFaderYAlignGutter = kIconYBase + kIconH + 2 + kStemIconH + 2;
     for (int t = 0; t < kNumTracks; ++t)
     {
-        const int gx = kTrack0X + t*kColW + kColHPad
+        const int gx = kTrack0X + t*kColW + kColHPad + kTrackControlsShiftX
                        + (kColW - 2*kColHPad - kGroupW) / 2;
         for (int s = 0; s < kNumStemsPerTrack; ++s)
             trackStemSliders[t][s].setBounds (gx + s*(kFaderW + kFaderGap),
@@ -635,11 +659,11 @@ void PluginEditor::resized()
     }
 
     // ── Left gutter controls ──────────────────────────────────────────────────
-    // SPLICE razor button — aligned with fader zone (nudged right vs. cassette art)
-    spliceButton.setBounds (48, kFaderY - 12, 100, 100);
+    // SPLICE razor button — vertically aligned with the unshifted fader row (track sliders may sit lower)
+    spliceButton.setBounds (48, kFaderYAlignGutter - 12, 100, 100);
 
     // BPM rotary — below splice button
-    constexpr int kBpmY = kFaderY + kFaderH + 4; // 598
+    constexpr int kBpmY = kFaderYAlignGutter + kFaderH + 4;
     bpmLabel.setBounds  (8,  kBpmY,      104, 18);
     bpmSlider.setBounds (12, kBpmY + 18,  96, 76);
 

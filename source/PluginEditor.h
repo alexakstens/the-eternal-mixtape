@@ -36,6 +36,7 @@ private:
 
     PluginProcessor& processorRef;
     juce::Image uiImage;
+    juce::ImageComponent tapeHeadlineImage { "Tape headline" };
     std::unique_ptr<melatonin::Inspector> inspector;
     juce::TextButton inspectButton { "Inspect the UI" };
 
