@@ -38,6 +38,7 @@ packaging/Output/*
 # Internal design docs (not pushed; see docs/UX_SUMMARY.md for shareable overview)
 docs/CPP_INTEGRATION_PLAN.md
 docs/UX_INTERFACE_DESIGN.md
+docs/UX_PLAN.md
 
 # =============================================================================
 # Large / binary assets (models, archives, local SDK drops)

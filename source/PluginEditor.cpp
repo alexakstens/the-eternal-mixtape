@@ -58,21 +58,84 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     meterLabel.setText ("VU", juce::dontSendNotification);
     meterLabel.setVisible (false);
 
-    // Tracks A–D, each with 4 vertical mini-faders (drums / bass / other / vocals).
-    const char* trackNames[] = { "TRACK A", "TRACK B", "TRACK C", "TRACK D" };
+    static const char* const kTrackTitles[kNumTracks] =
+        { "Track A", "Track B", "Track C", "Track D" };
+
+    // ── Track label icons (trackA/B/C/D.png) ──
+    {
+        const struct { const void* data; int size; } trackIconAssets[kNumTracks] = {
+            { BinaryData::trackA_png, BinaryData::trackA_pngSize },
+            { BinaryData::trackB_png, BinaryData::trackB_pngSize },
+            { BinaryData::trackC_png, BinaryData::trackC_pngSize },
+            { BinaryData::trackD_png, BinaryData::trackD_pngSize },
+        };
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            auto img = juce::ImageCache::getFromMemory (trackIconAssets[t].data,
+                                                        trackIconAssets[t].size);
+            trackLabelIcons[t].setName (kTrackTitles[t]);
+            // Scale header art to fit (same contain behaviour as stem icons)
+            trackLabelIcons[t].setImage (img, juce::RectanglePlacement::centred
+                                              | juce::RectanglePlacement::onlyReduceInSize);
+            addAndMakeVisible (trackLabelIcons[t]);
+        }
+    }
+
+    // ── Per-track input waveforms (one per track, always visible) ──
+    {
+        const juce::uint32 trackColours[kNumTracks] = {
+            0xff64b5f6, // Track A — blue
+            0xffef9a9a, // Track B — red-pink
+            0xffa5d6a7, // Track C — green
+            0xffffcc80, // Track D — amber
+        };
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            trackInputWaveforms[t] = std::make_unique<WaveformDisplay> (formatManager,
+                                                                         kTrackTitles[t]);
+            trackInputWaveforms[t]->setName (kTrackTitles[t]);
+            trackInputWaveforms[t]->setWaveformColour (juce::Colour (trackColours[t]));
+            addAndMakeVisible (*trackInputWaveforms[t]);
+        }
+    }
+
+    // ── Stem icons above each fader: vocal / bass / others / drum ──
+    {
+        const struct { const void* data; int size; } stemIconAssets[kNumStemsPerTrack] = {
+            { BinaryData::vocal_png,  BinaryData::vocal_pngSize  },
+            { BinaryData::bass_png,   BinaryData::bass_pngSize   },
+            { BinaryData::others_png, BinaryData::others_pngSize },
+            { BinaryData::drum_png,   BinaryData::drum_pngSize   },
+        };
+        static const char* const kStemIconNames[kNumStemsPerTrack] =
+            { "Vocals", "Bass", "Other", "Drums" };
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            for (int s = 0; s < kNumStemsPerTrack; ++s)
+            {
+                auto img = juce::ImageCache::getFromMemory (stemIconAssets[s].data,
+                                                            stemIconAssets[s].size);
+                stemIcons[t][s].setName (juce::String (kTrackTitles[t]) + " — "
+                                         + kStemIconNames[s]);
+                // Full artwork, uniformly scaled down to fit the icon slot (no clipping)
+                stemIcons[t][s].setImage (
+                    img, juce::RectanglePlacement::centred
+                             | juce::RectanglePlacement::onlyReduceInSize);
+                addAndMakeVisible (stemIcons[t][s]);
+            }
+        }
+    }
+
+    // ── Tracks A–D: 4 vertical stem faders each ──
     for (int i = 0; i < kNumTracks; ++i)
     {
-        trackLabels[i].setText (trackNames[i], juce::dontSendNotification);
-        trackLabels[i].setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (trackLabels[i]);
-
         for (int s = 0; s < kNumStemsPerTrack; ++s)
         {
             auto& sl = trackStemSliders[i][s];
             sl.setSliderStyle (juce::Slider::LinearVertical);
             sl.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
             sl.setRange (0.0, 2.0, 0.01);
-            sl.setValue (1.0); // unity gain by default — getTrackStemGain() not exposed yet
+            sl.setValue (1.0);
             sl.onValueChange = [this, i, s] {
                 processorRef.setTrackStemGain (i, s, (float) trackStemSliders[i][s].getValue());
             };
@@ -333,6 +396,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     stemStatusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (stemStatusLabel);
 
+    // Stem-separation output waveforms — only shown in Expertise mode overlay.
     drumsWaveform.setWaveformColour  (juce::Colour (0xffe57373));
     bassWaveform.setWaveformColour   (juce::Colour (0xff81c784));
     otherWaveform.setWaveformColour  (juce::Colour (0xffffb74d));
@@ -343,16 +407,12 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (vocalsWaveform);
 
     // Colour theme — sampled from Backgorund.png (warm vintage palette).
-    // textColour    = beige headline / body text
-    // accentColour  = orange highlight (knobs, sliders, primary buttons)
-    // panelDark     = neutral track background (slider rail)
     const juce::Colour textColour   (0xffc8b896);
     const juce::Colour accentColour (0xffF07030);
     const juce::Colour panelDark    (0xff555555);
 
     for (int i = 0; i < kNumTracks; ++i)
     {
-        trackLabels[i].setColour (juce::Label::textColourId, textColour);
         for (int s = 0; s < kNumStemsPerTrack; ++s)
         {
             trackStemSliders[i][s].setColour (juce::Slider::thumbColourId, accentColour);
@@ -379,6 +439,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     // Stem-separation panel is an "advanced" feature — hidden by default,
     // revealed when the user holds Cmd/Ctrl (Expertise Mode).
     setStemPanelVisible_ = [this] (bool v) {
+        // Stem separation controls + stem output waveforms — only in Expertise mode.
         stemInputLabel.setVisible (v);
         stemModelLabel.setVisible (v);
         stemOutputLabel.setVisible (v);
@@ -393,6 +454,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         stemCudaToggle.setVisible (v);
         stemProgressBar.setVisible (v);
         stemStatusLabel.setVisible (v);
+        // Stem separation output waveforms shown in Expertise mode overlay (2×2 grid).
         drumsWaveform.setVisible (v);
         bassWaveform.setVisible (v);
         otherWaveform.setVisible (v);
@@ -498,98 +560,129 @@ void PluginEditor::paint (juce::Graphics& g)
 
 void PluginEditor::resized()
 {
-    // Layout uses absolute coordinates derived from the V1.1 mockup (1024x682),
-    // scaled vertically (×768/682 ≈ 1.126) so each component sits over the matching
-    // baked-in slot in Backgorund.png at our 1024x768 window.
+    // ── Layout constants ─────────────────────────────────────────────────────────
+    // Left gutter: SPLICE razor + BPM knob (x = 0..119)
+    constexpr int kGutterW = 120;
+    // Pinch the four-track band horizontally — columns sit closer together and the
+    // whole A–D group is shifted toward the window centre.
+    constexpr int kTrackBankPinch = 48;
+    constexpr int kTrack0X      = kGutterW + kTrackBankPinch;
+    constexpr int kTrackBankW   = (1024 - kGutterW) - 2 * kTrackBankPinch;
+    constexpr int kColW         = kTrackBankW / kNumTracks;
 
-    // ── Runtime LED — orange digital slot in the centre of the cassette ──
-    runtimeLabel.setBounds (430, 360, 200, 50);
-
-    // ── Splice output waveform — multicolor strip below the cassette ──
-    // Note: the strip covers the LED area too, so we leave centre gap for the LED.
-    spliceOutputWaveform.setBounds (24, 358, 1000, 52);
-
-    // ── SPLICE big razor button (left edge of the mixer) ──
-    spliceButton.setBounds (24, 480, 110, 170);
-
-    // ── BPM small rotary knob — between SPLICE and Track A ──
-    bpmSlider.setBounds (140, 525, 60, 80);
-    bpmLabel.setBounds  (140, 505, 60, 18);
-
-    // ── Track band: 4 columns × 4 vertical mini-faders ──
-    // Each track column matches the baked-in mixer slots in the background.
-    constexpr int colX[kNumTracks] = { 210, 410, 615, 815 };  // left edge of each column
-    constexpr int colW = 175;                                  // width of each column
-    constexpr int labelY = 445, labelH = 22;                   // TRACK A/B/C/D label row
-    constexpr int slidersY = 478, slidersH = 175;              // 4 vertical mini-faders
-    constexpr int sliderGap = 4;
-    const int stemSliderW = (colW - 3 * sliderGap) / kNumStemsPerTrack; // ~40px
-
+    // ── Y zones (top of mixer area at y=356) ──────────────────────────────────
+    // Per-track input waveform windows (one per track, always visible)
+    constexpr int kWaveY = 356, kWaveH = 56;
     for (int t = 0; t < kNumTracks; ++t)
     {
-        trackLabels[t].setBounds (colX[t], labelY, colW, labelH);
-        for (int s = 0; s < kNumStemsPerTrack; ++s)
-        {
-            const int sx = colX[t] + s * (stemSliderW + sliderGap);
-            trackStemSliders[t][s].setBounds (sx, slidersY, stemSliderW, slidersH);
-        }
+        if (trackInputWaveforms[t])
+            trackInputWaveforms[t]->setBounds (kTrack0X + t*kColW + 1, kWaveY, kColW - 2, kWaveH);
     }
 
-    // ── Density (slider hidden in V1.1 layout but parked under the BPM area) ──
-    densityLabel.setBounds  (130, 720, 60, 18);
-    densitySlider.setBounds (24, 740, 200, 18); // tucked at the very bottom-left, off-frame
+    // Runtime LED centred across the waveform strip
+    runtimeLabel.setBounds (kTrack0X + kColW, kWaveY + 4, 2*kColW, kWaveH - 8);
 
-    // ── Bottom-left small cluster: gear + loop ──
-    settingsButton.setBounds (24, 670, 44, 44);
-    mainLoopBtn.setBounds    (74, 670, 44, 44);
+    // Splice output waveform — width matches the pinched track bank
+    constexpr int kSpliceY = kWaveY + kWaveH + 4; // 416
+    spliceOutputWaveform.setBounds (kTrack0X, kSpliceY, kTrackBankW, 34);
 
-    // ── Centre transport (5 buttons): Back / Rewind / Play / Forward / FastFwd ──
-    constexpr int tBtnW = 70, tBtnGap = 8;
-    constexpr int tTotalW = 5 * tBtnW + 4 * tBtnGap;     // 382
-    constexpr int tStartX = (1024 - tTotalW) / 2;        // 321
-    constexpr int tY = 668, tH = 56;
-    mainRewindBtn.setBounds  (tStartX + 0 * (tBtnW + tBtnGap), tY, tBtnW, tH);
-    mainStopBtn.setBounds    (tStartX + 1 * (tBtnW + tBtnGap), tY, tBtnW, tH);
-    mainPlayBtn.setBounds    (tStartX + 2 * (tBtnW + tBtnGap), tY, tBtnW, tH);
-    mainForwardBtn.setBounds (tStartX + 3 * (tBtnW + tBtnGap), tY, tBtnW, tH);
-    // Fifth slot reused by main rewind variant — for now stack on Forward.
-    // (We only have 4 SVG transport assets; the fifth slot in V1.1 is decorative.)
-    // If a "fast forward" asset is added, point a 5th DrawableButton here.
+    // Track label icons (trackA/B/C/D.png) — below splice output
+    constexpr int kIconY = kSpliceY + 34 + 4; // 454
+    constexpr int kIconH = 28;
+    for (int t = 0; t < kNumTracks; ++t)
+        trackLabelIcons[t].setBounds (kTrack0X + t*kColW + 4, kIconY, kColW - 8, kIconH);
 
-    // ── Bottom-right 2×2 cluster: AUTO SPLICE / REGENERATE / RANDOMIZE / REC ──
-    constexpr int rBtnW = 110, rBtnH = 38, rBtnGap = 6;
-    constexpr int rCol1X = 720, rCol2X = rCol1X + rBtnW + rBtnGap; // 836
-    constexpr int rRow1Y = 660, rRow2Y = rRow1Y + rBtnH + rBtnGap; // 704
-    autoSpliceButton.setBounds (rCol1X, rRow1Y, rBtnW, rBtnH);
-    regenerateButton.setBounds (rCol2X, rRow1Y, rBtnW, rBtnH);
-    randomizeButton.setBounds  (rCol1X, rRow2Y, rBtnW, rBtnH);
-    recButton.setBounds        (rCol2X, rRow2Y, rBtnW, rBtnH);
+    // Stem icons (vocal/bass/others/drum) — one per fader, above the fader
+    constexpr int kStemIconY = kIconY + kIconH + 2; // 484
+    constexpr int kStemIconH = 28; // tall enough for scaled full artwork
+    constexpr int kFaderW    = 44, kFaderGap = 3;
+    // Side padding inside each column pulls Track A’s left edge right and Track D’s right edge left
+    constexpr int kColHPad   = 10;
+    constexpr int kGroupW    = kNumStemsPerTrack * kFaderW + (kNumStemsPerTrack-1) * kFaderGap;
+    for (int t = 0; t < kNumTracks; ++t)
+    {
+        const int gx = kTrack0X + t*kColW + kColHPad
+                       + (kColW - 2*kColHPad - kGroupW) / 2;
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+            stemIcons[t][s].setBounds (gx + s*(kFaderW + kFaderGap), kStemIconY,
+                                       kFaderW, kStemIconH);
+    }
 
-    // ── Stem-separation panel (Expertise mode) — overlay on top of the mixer ──
+    // Stem faders — vertical, shorter than before
+    constexpr int kFaderY = kStemIconY + kStemIconH + 2; // 506
+    constexpr int kFaderH = 88;
+    for (int t = 0; t < kNumTracks; ++t)
+    {
+        const int gx = kTrack0X + t*kColW + kColHPad
+                       + (kColW - 2*kColHPad - kGroupW) / 2;
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+            trackStemSliders[t][s].setBounds (gx + s*(kFaderW + kFaderGap),
+                                              kFaderY, kFaderW, kFaderH);
+    }
+
+    // ── Left gutter controls ──────────────────────────────────────────────────
+    // SPLICE razor button — aligned with fader zone (nudged right vs. cassette art)
+    spliceButton.setBounds (48, kFaderY - 12, 100, 100);
+
+    // BPM rotary — below splice button
+    constexpr int kBpmY = kFaderY + kFaderH + 4; // 598
+    bpmLabel.setBounds  (8,  kBpmY,      104, 18);
+    bpmSlider.setBounds (12, kBpmY + 18,  96, 76);
+
+    // Density (hidden — parked off-screen)
+    densityLabel.setBounds  (0, 759, 1, 1);
+    densitySlider.setBounds (0, 759, 1, 1);
+
+    // ── Bottom controls ───────────────────────────────────────────────────────
+    constexpr int kBottomY = 708;
+
+    // Bottom-left: gear + loop
+    settingsButton.setBounds (8,  kBottomY, 46, 44);
+    mainLoopBtn.setBounds    (58, kBottomY, 40, 40);
+
+    // Centre transport — 4 buttons evenly spaced
+    constexpr int kTW = 68, kTH = 50, kTGap = 8;
+    constexpr int kTTotal = kNumTracks * kTW + (kNumTracks-1) * kTGap; // 296
+    constexpr int kTX0    = (1024 - kTTotal) / 2;                      // 364
+    mainRewindBtn.setBounds  (kTX0 + 0*(kTW+kTGap), kBottomY, kTW, kTH);
+    mainStopBtn.setBounds    (kTX0 + 1*(kTW+kTGap), kBottomY, kTW, kTH);
+    mainPlayBtn.setBounds    (kTX0 + 2*(kTW+kTGap), kBottomY, kTW, kTH);
+    mainForwardBtn.setBounds (kTX0 + 3*(kTW+kTGap), kBottomY, kTW, kTH);
+
+    // Bottom-right 2×2: AUTO SPLICE / REGENERATE / RANDOMIZE / REC
+    constexpr int kRW = 120, kRH = 36, kRGap = 5;
+    constexpr int kRX1 = 716, kRX2 = kRX1 + kRW + kRGap;
+    constexpr int kRY1 = kBottomY, kRY2 = kRY1 + kRH + kRGap;
+    autoSpliceButton.setBounds (kRX1, kRY1, kRW, kRH);
+    regenerateButton.setBounds (kRX2, kRY1, kRW, kRH);
+    randomizeButton.setBounds  (kRX1, kRY2, kRW, kRH);
+    recButton.setBounds        (kRX2, kRY2, kRW, kRH);
+
+    // ── Expertise mode: stem panel overlay (Cmd held) ─────────────────────────
     if (isExpertiseMode_)
     {
-        auto stem = juce::Rectangle<int> (20, 60, getWidth() - 40, 240);
+        auto stemR = juce::Rectangle<int> (kTrack0X, 22, kTrackBankW, 330);
         const int labelW = 60, browseW = 70, rowH = 26, gap = 4;
 
-        auto row1 = stem.removeFromTop (rowH);
+        auto row1 = stemR.removeFromTop (rowH);
         stemInputLabel.setBounds  (row1.removeFromLeft  (labelW));
         stemInputBrowse.setBounds (row1.removeFromRight (browseW));
         stemInputEditor.setBounds (row1);
-        stem.removeFromTop (gap);
+        stemR.removeFromTop (gap);
 
-        auto row2 = stem.removeFromTop (rowH);
+        auto row2 = stemR.removeFromTop (rowH);
         stemModelLabel.setBounds  (row2.removeFromLeft  (labelW));
         stemModelBrowse.setBounds (row2.removeFromRight (browseW));
         stemModelEditor.setBounds (row2);
-        stem.removeFromTop (gap);
+        stemR.removeFromTop (gap);
 
-        auto row3 = stem.removeFromTop (rowH);
+        auto row3 = stemR.removeFromTop (rowH);
         stemOutputLabel.setBounds  (row3.removeFromLeft  (labelW));
         stemOutputBrowse.setBounds (row3.removeFromRight (browseW));
         stemOutputEditor.setBounds (row3);
-        stem.removeFromTop (gap);
+        stemR.removeFromTop (gap);
 
-        auto ctlRow = stem.removeFromTop (28);
+        auto ctlRow = stemR.removeFromTop (28);
         stemCudaToggle.setBounds    (ctlRow.removeFromLeft (80));
         ctlRow.removeFromLeft (8);
         stemProcessButton.setBounds (ctlRow.removeFromLeft (90));
@@ -597,20 +690,21 @@ void PluginEditor::resized()
         stemCancelButton.setBounds  (ctlRow.removeFromLeft (90));
         ctlRow.removeFromLeft (12);
         stemProgressBar.setBounds   (ctlRow.removeFromLeft (200));
-        stem.removeFromTop (gap);
+        stemR.removeFromTop (gap);
 
-        stemStatusLabel.setBounds (stem.removeFromTop (20));
-        stem.removeFromTop (gap);
+        stemStatusLabel.setBounds (stemR.removeFromTop (20));
+        stemR.removeFromTop (gap);
 
-        const int waveH = (stem.getHeight() - gap) / 2;
-        const int halfW = (stem.getWidth()  - gap) / 2;
-        auto t1 = stem.removeFromTop (waveH);
-        drumsWaveform.setBounds (t1.removeFromLeft (halfW));
+        // 2×2 stem-separation output waveform grid
+        const int wH = (stemR.getHeight() - gap) / 2;
+        const int wW = (stemR.getWidth()  - gap) / 2;
+        auto t1 = stemR.removeFromTop (wH);
+        drumsWaveform.setBounds (t1.removeFromLeft (wW));
         t1.removeFromLeft (gap);
         bassWaveform.setBounds  (t1);
-        stem.removeFromTop (gap);
-        auto t2 = stem.removeFromTop (waveH);
-        otherWaveform.setBounds (t2.removeFromLeft (halfW));
+        stemR.removeFromTop (gap);
+        auto t2 = stemR.removeFromTop (wH);
+        otherWaveform.setBounds (t2.removeFromLeft (wW));
         t2.removeFromLeft (gap);
         vocalsWaveform.setBounds (t2);
     }

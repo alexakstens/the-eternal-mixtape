@@ -45,11 +45,20 @@ private:
     juce::Label runtimeLabel;
     juce::Label meterLabel;
 
-    // Tracks A–D: each has a label + 4 vertical stem mini-faders
-    // (drums / bass / other / vocals — matching the icons baked into the background).
+    // Tracks A–D: icon label, per-track input waveform, 4 stem faders, stem icons
     static constexpr int kNumTracks = 4;
     static constexpr int kNumStemsPerTrack = 4;
-    juce::Label  trackLabels[kNumTracks];
+
+    // Track header icons (trackA.png … trackD.png)
+    juce::ImageComponent trackLabelIcons[kNumTracks];
+
+    // Per-track source audio waveform (shown in ordinary mode above each track)
+    std::unique_ptr<WaveformDisplay> trackInputWaveforms[kNumTracks];
+
+    // Small stem icons above each fader: vocal / bass / others / drum
+    juce::ImageComponent stemIcons[kNumTracks][kNumStemsPerTrack];
+
+    // 16 vertical gain faders (4 stems × 4 tracks)
     juce::Slider trackStemSliders[kNumTracks][kNumStemsPerTrack];
 
     // Splice panel
