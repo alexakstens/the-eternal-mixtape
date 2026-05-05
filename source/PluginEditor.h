@@ -43,11 +43,13 @@ private:
 
     // Top: meter + runtime
     juce::Label runtimeLabel;
+    juce::Label runtimeCaptionLabel { {}, "RUNTIME" };
     juce::Label meterLabel;
 
     // Tracks A–D: icon label, per-track input waveform, 4 stem faders, stem icons
     static constexpr int kNumTracks = 4;
     static constexpr int kNumStemsPerTrack = 4;
+    static constexpr float kRuntimeFontPt = 24.0f;
 
     // Track header icons (trackA.png … trackD.png)
     juce::ImageComponent trackLabelIcons[kNumTracks];

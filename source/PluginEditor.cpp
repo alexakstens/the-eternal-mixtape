@@ -49,10 +49,15 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     };
 
     // Runtime LED — sits in the orange digital-display slot baked into the cassette art.
+    auto runtimeFont = juce::Font (juce::FontOptions ("Menlo", kRuntimeFontPt, juce::Font::bold));
     runtimeLabel.setJustificationType (juce::Justification::centred);
-    runtimeLabel.setFont (juce::Font (juce::FontOptions ("Menlo", 22.0f, juce::Font::bold)));
+    runtimeLabel.setFont (runtimeFont);
     runtimeLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffa030));
     addAndMakeVisible (runtimeLabel);
+
+    runtimeCaptionLabel.setJustificationType (juce::Justification::centred);
+    runtimeCaptionLabel.setFont (runtimeFont);
+    addAndMakeVisible (runtimeCaptionLabel);
 
     // VU meter label is no longer drawn — kept for backward compat but invisible.
     meterLabel.setText ("VU", juce::dontSendNotification);
@@ -421,7 +426,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     }
     bpmLabel.setColour          (juce::Label::textColourId, textColour);
     densityLabel.setColour      (juce::Label::textColourId, textColour);
-    runtimeLabel.setColour      (juce::Label::textColourId, textColour);
+    runtimeLabel.setColour      (juce::Label::textColourId, juce::Colour (0xffffa030));
+    runtimeCaptionLabel.setColour (juce::Label::textColourId, textColour);
     meterLabel.setColour        (juce::Label::textColourId, textColour);
     spliceStatusLabel.setColour (juce::Label::textColourId, textColour);
     stemStatusLabel.setColour   (juce::Label::textColourId, textColour);
@@ -579,8 +585,16 @@ void PluginEditor::resized()
             trackInputWaveforms[t]->setBounds (kTrack0X + t*kColW + 1, kWaveY, kColW - 2, kWaveH);
     }
 
-    // Runtime LED centred across the waveform strip
-    runtimeLabel.setBounds (kTrack0X + kColW, kWaveY + 4, 2*kColW, kWaveH - 8);
+    // Runtime LED — far left, in the margin to the left of Track A’s waveform (+20 px vs art slot).
+    // Two equal-height rows (time + RUNTIME), horizontally centred, share 24 pt Menlo bold.
+    constexpr int kRuntimeX     = 32;
+    constexpr int kRuntimeRight = kTrack0X - 8; // small gap before Track A
+    constexpr int kRuntimeW     = kRuntimeRight - kRuntimeX;
+    constexpr int kRuntimeCapGap = 2;
+    constexpr int kRuntimeLineH = (kWaveH - kRuntimeCapGap) / 2;
+    runtimeLabel.setBounds (kRuntimeX, kWaveY, kRuntimeW, kRuntimeLineH);
+    runtimeCaptionLabel.setBounds (kRuntimeX, kWaveY + kRuntimeLineH + kRuntimeCapGap,
+                                   kRuntimeW, kRuntimeLineH);
 
     // Splice output waveform — width matches the pinched track bank
     constexpr int kSpliceY = kWaveY + kWaveH + 4; // 416
