@@ -121,7 +121,6 @@ public:
     // UX contract: Stem separation (progress/error for UI)
     //==============================================================================
     std::vector<juce::File> getLastStemFiles() const;
-    juce::File getLastStemOutputDir() const;
     float getStemProgress() const;
     juce::String getStemStatusMessage() const;
     juce::String getStemErrorMessage() const;
@@ -145,9 +144,15 @@ public:
                         bool skipWarp = false, float density = 0.5f,
                         bool randomizeTime = false, unsigned int seed = 42);
 
-    // Allows the editor to set the stems directory from a file drop or browse,
-    // so SPLICE can run without requiring in-session stem separation.
-    void setLastStemOutputDir (const juce::File& dir) { lastStemOutputDir_ = dir; }
+    // Per-track stem directory API.
+    // Each of the 4 tracks owns its own _stems/ directory once separation has run.
+    // Splice operations in Expertise Mode use these per-track dirs automatically.
+    juce::File getStemOutputDir (int trackIndex) const;
+    void       setStemOutputDir (int trackIndex, const juce::File& dir);
+
+    // Compatibility shims: operate on the active track's stem dir.
+    void setLastStemOutputDir (const juce::File& dir);
+    juce::File getLastStemOutputDir() const;
 
     // Simple-mode: write the active track to a temp dir so SpliceThread can chop it
     // without requiring Demucs stem separation. Sets lastStemOutputDir_ on success.
@@ -192,14 +197,16 @@ private:
         juce::File sourceFile;
         std::vector<juce::File> stemFiles;
         float gain = 1.0f;
-        float stemGain[2] = { 1.0f, 1.0f };
+        // 4 per-stem gains: [0]=Vocals, [1]=Bass, [2]=Other, [3]=Drums
+        float stemGain[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
         float pan = 0.0f;
-        bool stemMute[2] = { false, false };
+        bool stemMute[4] = { false, false, false, false };
     };
     TrackState trackState_[kNumTracks];
     double globalBPM_ = 120.0;
     float spliceDensity_ = 0.5f;
-    juce::File lastStemOutputDir_;
+    // Per-track stem directories — each track has its own _stems/ folder once separated.
+    juce::File stemOutputDirs_[kNumTracks];
     float analysisProgress_ = 0.0f;
     juce::String lastAnalysisErrorMessage_;
 

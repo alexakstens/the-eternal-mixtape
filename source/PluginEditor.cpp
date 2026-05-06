@@ -865,39 +865,39 @@ void PluginEditor::filesDropped (const juce::StringArray& files, int x, int)
 
         if (juce::isPositiveAndBelow (trackIdx, kNumTracks))
         {
-            // Load file into the target track: waveform display + processor buffer
+            // Load file into the target track: waveform display + processor buffer.
+            // Make the dropped-on track active so the stem panel reflects it.
+            processorRef.setActiveTrack (trackIdx);
             if (trackInputWaveforms[trackIdx])
                 trackInputWaveforms[trackIdx]->loadFile (file);
             processorRef.loadTrackFile (trackIdx, file);
-            // Also populate stem-separation input if track A is loaded (convenience)
-            if (trackIdx == 0)
-            {
-                stemInputEditor.setText (f);
-                auto outputDir = file.getParentDirectory()
-                    .getChildFile (file.getFileNameWithoutExtension() + "_stems");
-                stemOutputEditor.setText (outputDir.getFullPathName());
 
-                // If stems already exist next to the file, wire them up so
-                // SPLICE can run immediately without re-running separation
-                const bool stemsExist = outputDir.isDirectory()
-                    && (outputDir.getChildFile ("drums.wav").existsAsFile()
-                        || outputDir.getChildFile ("bass.wav").existsAsFile());
-                if (stemsExist)
-                {
-                    processorRef.setLastStemOutputDir (outputDir);
-                    loadStemWaveforms();
-                }
-            }
-        }
-        else
-        {
-            // Dropped outside any track column — fall back to stem-separation input
+            // Always update the stem panel to reflect this track's file, regardless
+            // of which slot it's in — the Separate button always acts on the active track.
             stemInputEditor.setText (f);
             auto outputDir = file.getParentDirectory()
                 .getChildFile (file.getFileNameWithoutExtension() + "_stems");
             stemOutputEditor.setText (outputDir.getFullPathName());
 
-            // Same: if stems already exist, register the directory
+            // If a _stems/ folder already exists next to this file, register it
+            // against the track's slot so SPLICE can run immediately.
+            const bool stemsExist = outputDir.isDirectory()
+                && (outputDir.getChildFile ("drums.wav").existsAsFile()
+                    || outputDir.getChildFile ("bass.wav").existsAsFile());
+            if (stemsExist)
+            {
+                processorRef.setStemOutputDir (trackIdx, outputDir);
+                loadStemWaveforms();
+            }
+        }
+        else
+        {
+            // Dropped outside any track column — populate stem panel only.
+            stemInputEditor.setText (f);
+            auto outputDir = file.getParentDirectory()
+                .getChildFile (file.getFileNameWithoutExtension() + "_stems");
+            stemOutputEditor.setText (outputDir.getFullPathName());
+
             const bool stemsExist = outputDir.isDirectory()
                 && (outputDir.getChildFile ("drums.wav").existsAsFile()
                     || outputDir.getChildFile ("bass.wav").existsAsFile());

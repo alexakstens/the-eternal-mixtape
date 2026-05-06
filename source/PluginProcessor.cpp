@@ -662,7 +662,7 @@ void PluginProcessor::prepareSimpleSpliceDir()
             writer->writeFromAudioSampleBuffer (copy, 0, copy.getNumSamples());
     }
 
-    lastStemOutputDir_ = spliceDir;
+    stemOutputDirs_[activeTrack_.load()] = spliceDir;
 }
 
 void PluginProcessor::prepareDualTrackSpliceDir()
@@ -746,50 +746,53 @@ void PluginProcessor::prepareDualTrackSpliceDir()
                                                 interleaved.getNumSamples());
     }
 
-    lastStemOutputDir_ = spliceDir;
+    stemOutputDirs_[activeTrack_.load()] = spliceDir;
 }
 
 void PluginProcessor::applyAutoSpliceDualTrack()
 {
     // Always rebuild the interleaved file so newly dropped tracks are picked up.
     prepareDualTrackSpliceDir();
-    if (lastStemOutputDir_ == juce::File{}) return;
-    requestSplice (lastStemOutputDir_, 0.0, globalBPM_, false, spliceDensity_,
-                   false, 42);
+    auto dir = stemOutputDirs_[activeTrack_.load()];
+    if (dir == juce::File{}) return;
+    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, false, 42);
 }
 
 void PluginProcessor::applyAutoSplice()
 {
-    // Expert-mode path: uses whatever stems are already registered.
-    // Reproducible: fixed seed 42 → same shuffle at current BPM + density.
-    if (lastStemOutputDir_ == juce::File{})
+    // Expert-mode path: uses the active track's registered stems.
+    // If no stems, fall back to simple single-track mode.
+    // Reproducible: fixed seed 42.
+    const int t = activeTrack_.load();
+    if (stemOutputDirs_[t] == juce::File{})
         prepareSimpleSpliceDir();
-    if (lastStemOutputDir_ == juce::File{}) return;
-    requestSplice (lastStemOutputDir_, 0.0, globalBPM_, false, spliceDensity_,
-                   false, 42);
+    auto dir = stemOutputDirs_[t];
+    if (dir == juce::File{}) return;
+    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, false, 42);
 }
 
 void PluginProcessor::regenerateMix()
 {
-    // New shuffle on each press (random seed) but uniform BPM — like rolling the dice again.
-    if (lastStemOutputDir_ == juce::File{})
+    // New shuffle each press (random seed), uniform BPM — roll the dice again.
+    const int t = activeTrack_.load();
+    if (stemOutputDirs_[t] == juce::File{})
         prepareSimpleSpliceDir();
-    if (lastStemOutputDir_ == juce::File{}) return;
+    auto dir = stemOutputDirs_[t];
+    if (dir == juce::File{}) return;
     const auto seed = (unsigned int) juce::Time::getMillisecondCounterHiRes();
-    requestSplice (lastStemOutputDir_, 0.0, globalBPM_, false, spliceDensity_,
-                   false, seed);
+    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, false, seed);
 }
 
 void PluginProcessor::randomizeMix()
 {
-    // Variable tempo: each beat is stretched to a different length (0.5×–1.8× target),
-    // so the piece warps in and out of the global BPM throughout. Also re-shuffles.
-    if (lastStemOutputDir_ == juce::File{})
+    // Per-beat tempo variation (0.5×–1.8× target) + new shuffle.
+    const int t = activeTrack_.load();
+    if (stemOutputDirs_[t] == juce::File{})
         prepareSimpleSpliceDir();
-    if (lastStemOutputDir_ == juce::File{}) return;
+    auto dir = stemOutputDirs_[t];
+    if (dir == juce::File{}) return;
     const auto seed = (unsigned int) juce::Time::getMillisecondCounterHiRes();
-    requestSplice (lastStemOutputDir_, 0.0, globalBPM_, false, spliceDensity_,
-                   true, seed);
+    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, true, seed);
 }
 
 void PluginProcessor::startRecording()
@@ -807,22 +810,18 @@ void PluginProcessor::startRecording (const juce::File& outputFile)
 //==============================================================================
 std::vector<juce::File> PluginProcessor::getLastStemFiles() const
 {
-    if (lastStemOutputDir_ == juce::File{})
+    auto dir = stemOutputDirs_[activeTrack_.load()];
+    if (dir == juce::File{})
         return {};
     auto stems = { "drums.wav", "bass.wav", "other.wav", "vocals.wav", "guitar.wav", "piano.wav" };
     std::vector<juce::File> result;
     for (auto& name : stems)
     {
-        auto f = lastStemOutputDir_.getChildFile (name);
+        auto f = dir.getChildFile (name);
         if (f.existsAsFile())
             result.push_back (f);
     }
     return result;
-}
-
-juce::File PluginProcessor::getLastStemOutputDir() const
-{
-    return lastStemOutputDir_;
 }
 
 float PluginProcessor::getStemProgress() const
@@ -840,12 +839,36 @@ juce::String PluginProcessor::getStemErrorMessage() const
     return separationThread.getErrorMessage();
 }
 
+juce::File PluginProcessor::getStemOutputDir (int trackIndex) const
+{
+    if (juce::isPositiveAndBelow (trackIndex, kNumTracks))
+        return stemOutputDirs_[trackIndex];
+    return {};
+}
+
+void PluginProcessor::setStemOutputDir (int trackIndex, const juce::File& dir)
+{
+    if (juce::isPositiveAndBelow (trackIndex, kNumTracks))
+        stemOutputDirs_[trackIndex] = dir;
+}
+
+juce::File PluginProcessor::getLastStemOutputDir() const
+{
+    return stemOutputDirs_[activeTrack_.load()];
+}
+
+void PluginProcessor::setLastStemOutputDir (const juce::File& dir)
+{
+    stemOutputDirs_[activeTrack_.load()] = dir;
+}
+
 void PluginProcessor::requestStemSeparation (const juce::File& inputFile,
                                              const juce::File& modelFile,
                                              const juce::File& outputDir,
                                              bool useCuda)
 {
-    lastStemOutputDir_ = outputDir;
+    // Store against the active track so each track owns its own stem directory.
+    stemOutputDirs_[activeTrack_.load()] = outputDir;
     separationThread.configure (inputFile, modelFile, outputDir, useCuda);
     separationThread.startThread();
 }
