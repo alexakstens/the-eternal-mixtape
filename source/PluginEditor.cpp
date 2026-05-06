@@ -1,5 +1,19 @@
 #include "PluginEditor.h"
 
+namespace
+{
+/** Pulled in from default slider layout — keeps rotary size, nudges BPM value 1 px toward the knob. */
+struct BpmValueNudgeLookAndFeel : juce::LookAndFeel_V4
+{
+    juce::Slider::SliderLayout getSliderLayout (juce::Slider& slider) override
+    {
+        auto layout = LookAndFeel_V4::getSliderLayout (slider);
+        layout.textBoxBounds.translate (0, -1);
+        return layout;
+    }
+};
+} // namespace
+
 //==============================================================================
 // Helper: load SVG states onto a DrawableButton (clears JUCE button background)
 static void applySVGImages (juce::DrawableButton& btn,
@@ -176,7 +190,6 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     bpmSlider.setValue (processorRef.getGlobalBPM());
     bpmSlider.onValueChange = [this] { processorRef.setGlobalBPM (bpmSlider.getValue()); };
     addAndMakeVisible (bpmSlider);
-    addAndMakeVisible (bpmLabel);
     densitySlider.setSliderStyle (juce::Slider::LinearHorizontal);
     densitySlider.setTextBoxStyle (juce::Slider::TextBoxRight, true, 50, 20);
     densitySlider.setRange (0.0, 1.0, 0.01);
@@ -433,7 +446,6 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             trackStemSliders[i][s].setColour (juce::Slider::trackColourId, panelDark);
         }
     }
-    bpmLabel.setColour          (juce::Label::textColourId, textColour);
     densityLabel.setColour      (juce::Label::textColourId, textColour);
     runtimeLabel.setColour      (juce::Label::textColourId, juce::Colour (0xffffa030));
     runtimeCaptionLabel.setColour (juce::Label::textColourId, textColour);
@@ -445,6 +457,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     bpmSlider.setColour     (juce::Slider::rotarySliderFillColourId,  accentColour);
     bpmSlider.setColour     (juce::Slider::textBoxTextColourId,       textColour);
     bpmSlider.setColour     (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
+    bpmSliderLookAndFeel_   = std::make_unique<BpmValueNudgeLookAndFeel>();
+    bpmSlider.setLookAndFeel (bpmSliderLookAndFeel_.get());
     densitySlider.setColour (juce::Slider::thumbColourId,             accentColour);
     densitySlider.setColour (juce::Slider::trackColourId,             panelDark);
 
@@ -485,6 +499,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
 PluginEditor::~PluginEditor()
 {
+    bpmSlider.setLookAndFeel (nullptr);
     stopTimer();
 }
 
@@ -584,7 +599,7 @@ void PluginEditor::resized()
                                  kTapeHeadlineH);
 
     // ── Layout constants ─────────────────────────────────────────────────────────
-    // Left gutter: SPLICE razor + BPM knob (x = 0..119)
+    // Left gutter: SPLICE razor (~x 0–128). BPM rotary sits bottom-left (see kBpmLeftMargin).
     constexpr int kGutterW = 120;
     // Pinch the four-track band horizontally — columns sit closer together and the
     // whole A–D group is shifted toward the window centre.
@@ -647,7 +662,7 @@ void PluginEditor::resized()
     // Stem faders — vertical, shorter than before
     constexpr int kFaderY = kStemIconY + kStemIconH + 2;
     constexpr int kFaderH = 88;
-    // SPLICE razor + BPM: original row (no kTrackControlsShiftY) — only headers/icons/sliders shift
+    // SPLICE razor + BPM: BPM bottom-left anchored separately; only fader row alignment uses kFaderYAlignGutter here
     constexpr int kFaderYAlignGutter = kIconYBase + kIconH + 2 + kStemIconH + 2;
     for (int t = 0; t < kNumTracks; ++t)
     {
@@ -662,10 +677,15 @@ void PluginEditor::resized()
     // SPLICE razor button — vertically aligned with the unshifted fader row (track sliders may sit lower)
     spliceButton.setBounds (48, kFaderYAlignGutter - 12, 100, 100);
 
-    // BPM rotary — below splice button
-    constexpr int kBpmY = kFaderYAlignGutter + kFaderH + 4;
-    bpmLabel.setBounds  (8,  kBpmY,      104, 18);
-    bpmSlider.setBounds (12, kBpmY + 18,  96, 76);
+    // BPM rotary — background art supplies the “BPM” caption; slider text box shows the value only.
+    // Anchored: kBpmLeftMargin from left, kBpmBottomMargin from bottom; L&F pulls value 1 px toward the rotary.
+    constexpr int kBpmSliderW         = 96;
+    constexpr int kBpmSliderH         = 76; // rotary + TextBoxBelow (matches setTextBoxStyle h)
+    constexpr int kBpmLeftMargin      = 44;
+    constexpr int kBpmBottomMargin    = 0;
+    bpmSlider.setBounds (kBpmLeftMargin,
+                         getHeight() - kBpmBottomMargin - kBpmSliderH,
+                         kBpmSliderW, kBpmSliderH);
 
     // Density (hidden — parked off-screen)
     densityLabel.setBounds  (0, 759, 1, 1);
@@ -673,24 +693,31 @@ void PluginEditor::resized()
 
     // ── Bottom controls ───────────────────────────────────────────────────────
     constexpr int kBottomY = 708;
+    constexpr int kBottomCentreY = kBottomY - 15;
+    // Shared size for bottom TextButtons (Settings + AUTO SPLICE / … row)
+    constexpr int kRW = 120, kRH = 36, kRGap = 5;
 
-    // Bottom-left: gear + loop
-    settingsButton.setBounds (8,  kBottomY, 46, 44);
-    mainLoopBtn.setBounds    (58, kBottomY, 40, 40);
+    // Bottom-left: gear + loop (nudged up + shifted right vs. original 8/58 @ kBottomY)
+    constexpr int kBottomLeftShiftX = 120; // 128 px from window left for Settings (5 px left of prior)
+    constexpr int kSettingsX        = 8 + kBottomLeftShiftX;
+    constexpr int kBottomLeftY      = kBottomCentreY + 5; // +5 px toward bottom edge
+    settingsButton.setBounds (kSettingsX, kBottomLeftY, kRW, kRH);
+    mainLoopBtn.setBounds    (kSettingsX + kRW + kRGap, kBottomLeftY, 40, 40);
 
-    // Centre transport — 4 buttons evenly spaced
+    // Centre transport — 4 buttons evenly spaced (nudged up vs. kBottomY)
     constexpr int kTW = 68, kTH = 50, kTGap = 8;
     constexpr int kTTotal = kNumTracks * kTW + (kNumTracks-1) * kTGap; // 296
     constexpr int kTX0    = (1024 - kTTotal) / 2;                      // 364
-    mainRewindBtn.setBounds  (kTX0 + 0*(kTW+kTGap), kBottomY, kTW, kTH);
-    mainStopBtn.setBounds    (kTX0 + 1*(kTW+kTGap), kBottomY, kTW, kTH);
-    mainPlayBtn.setBounds    (kTX0 + 2*(kTW+kTGap), kBottomY, kTW, kTH);
-    mainForwardBtn.setBounds (kTX0 + 3*(kTW+kTGap), kBottomY, kTW, kTH);
+    mainRewindBtn.setBounds  (kTX0 + 0*(kTW+kTGap), kBottomCentreY, kTW, kTH);
+    mainStopBtn.setBounds    (kTX0 + 1*(kTW+kTGap), kBottomCentreY, kTW, kTH);
+    mainPlayBtn.setBounds    (kTX0 + 2*(kTW+kTGap), kBottomCentreY, kTW, kTH);
+    mainForwardBtn.setBounds (kTX0 + 3*(kTW+kTGap), kBottomCentreY, kTW, kTH);
 
-    // Bottom-right 2×2: AUTO SPLICE / REGENERATE / RANDOMIZE / REC
-    constexpr int kRW = 120, kRH = 36, kRGap = 5;
-    constexpr int kRX1 = 716, kRX2 = kRX1 + kRW + kRGap;
-    constexpr int kRY1 = kBottomY, kRY2 = kRY1 + kRH + kRGap;
+    // Bottom-right 2×2: AUTO SPLICE / REGENERATE / RANDOMIZE / REC (above centre row; shifted right)
+    constexpr int kRX1 = 766, kRX2 = kRX1 + kRW + kRGap; // +50 px vs prior right-column anchor
+    constexpr int kRightBottomShiftY = 10;
+    constexpr int kRY1 = kBottomCentreY - kRightBottomShiftY;
+    constexpr int kRY2 = kRY1 + kRH + kRGap;
     autoSpliceButton.setBounds (kRX1, kRY1, kRW, kRH);
     regenerateButton.setBounds (kRX2, kRY1, kRW, kRH);
     randomizeButton.setBounds  (kRX1, kRY2, kRW, kRH);

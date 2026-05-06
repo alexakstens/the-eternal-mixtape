@@ -69,7 +69,6 @@ private:
     juce::ToggleButton   skipWarpToggle { "Skip Warp" };
     juce::Slider bpmSlider;
     juce::Slider densitySlider;
-    juce::Label bpmLabel { {}, "BPM" };
     juce::Label densityLabel { {}, "DENSITY" };
 
     // Splice output waveform (result of time-stretch remix)
@@ -124,6 +123,7 @@ private:
     WaveformDisplay vocalsWaveform { formatManager, "Vocals" };
     bool stemsLoaded = false;
 
+    std::unique_ptr<juce::LookAndFeel> bpmSliderLookAndFeel_;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
