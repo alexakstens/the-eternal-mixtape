@@ -106,13 +106,36 @@ Drag any audio file directly onto one of the four track waveform panels (Track A
 
 You can load all four tracks independently in any order. Tracks do not need to have the same length, key, or BPM.
 
+### What happens when you drop a file
+
+When you drop a file onto any track panel, three things happen simultaneously:
+
+1. The waveform renders in that track's panel.
+2. That track becomes the **active track** (the one the transport plays and the stem panel refers to).
+3. The **stem separation panel auto-populates** with that track's file path and its expected `_stems/` output directory — ready for you to run Separate whenever you choose.
+
+You are never locked into a particular file path in the stem panel. It always reflects the most recently loaded track.
+
+### Each track owns its own stems
+
+Every track maintains a separate stem directory:
+
+```
+Track A → song1_stems/    ← Track A's stems (drums, bass, other, vocals)
+Track B → song2_stems/    ← Track B's stems
+Track C → song3_stems/    ← Track C's stems (empty until separated)
+Track D → song4_stems/    ← Track D's stems (empty until separated)
+```
+
+Once you separate Track A, its `_stems/` folder is stored against slot A. Separating Track B stores its folder against slot B — it does not overwrite Track A's stems. You can separate each track independently at any time.
+
 ### Track order matters for AUTO SPLICE
 
-AUTO SPLICE always blends the **active track** with the **next loaded track** in order (A→B→C→D→A). To get the two-song mix you want, load your preferred songs into adjacent slots before pressing AUTO SPLICE. For example, load Song 1 into Track A and Song 2 into Track B, then make sure Track A is active before pressing AUTO SPLICE.
+AUTO SPLICE always blends the **active track** with the **next loaded track** in order (A→B→C→D→A). Load your preferred songs into adjacent slots before pressing AUTO SPLICE. For example, Song 1 into Track A and Song 2 into Track B, then make Track A active before pressing AUTO SPLICE.
 
-### Pre-existing stems
+### Pre-existing stems are detected automatically
 
-If you have already run stem separation in a previous session and the `_stems/` folder is still next to your audio file, drag the original audio file back onto Track A. The application detects the `_stems/` folder automatically and re-registers the stems without requiring another separation pass.
+If a `_stems/` folder already exists next to your audio file (from a previous session), dropping that file onto any track instantly registers those stems against that track's slot. No re-separation needed — the splice engine can use them immediately.
 
 ---
 
@@ -167,9 +190,16 @@ Each of the four tracks has a mixer strip with four vertical faders, one per ste
 
 **Range:** 0 (silent) to 2.0 (double gain). Default is 1.0 (unity).
 
-**In Simple Mode:** The faders are visible but stem separation has not been run. Moving them adjusts the gain registers that will be used once stems are available — they have no audible effect on raw tracks.
+**In Simple Mode:** The faders are visible but do not shape the audio yet — stem separation has not been run. Their settings are remembered so you can dial in the mix before separating.
 
-**In Expertise Mode (Cmd held):** After stem separation completes, each fader controls a real isolated audio layer. You can, for example, pull the vocals to zero while keeping drums and bass at full — effectively an a cappella-free remix input.
+**In Expertise Mode (Cmd held) — the faders become input shaping for splice:**
+Each fader controls its stem's contribution to whatever the splice engine receives. This is not a playback mixer — it shapes what goes *into* the splice operation:
+
+- Pull Track A's **Vocals** fader to 0 before pressing SPLICE → the splice output contains no vocals from Track A (instrumental remix)
+- Boost Track B's **Drums** fader to 2.0 → Track B's drums are twice as prominent in the splice blend
+- Zero out all stems except **Bass** → the splice output is a bass-only remix
+
+Each track's four fader positions are independent. You can shape Track A and Track B differently before AUTO SPLICE blends them.
 
 ---
 
@@ -215,7 +245,7 @@ If only one track is loaded, AUTO SPLICE falls back to a single-track self-remix
 AUTO SPLICE uses a **fixed random seed**, so the same BPM and loaded tracks produce the same result every time. For a different arrangement, use [REGENERATE](#regenerate).
 
 **Expertise mode (Cmd held):**
-Routes through Demucs stems from the currently registered stem directory, using seed 42 for a deterministic result.
+Routes through each track's own registered stem directory. Track A uses `song1_stems/`, Track B uses `song2_stems/`, and so on — each independently shaped by that track's fader positions. Result uses seed 42 for reproducibility.
 
 ---
 
@@ -259,22 +289,37 @@ Stem separation uses the Demucs neural network to split a full mix into four iso
 | Other (guitars, synths, etc.) | Orange |
 | Vocals | Blue |
 
-### Running separation
+### The separation flow
 
-Stem Separation is only visible in **Expertise Mode** (hold Cmd). The panel appears with the following fields:
+Stem Separation is only visible in **Expertise Mode** (hold Cmd). Here is the complete flow:
 
-1. **Input** — path to the audio file you want to separate. Use the Browse button or drag a file onto Track A first (the path auto-fills).
-2. **Model** — path to your local Demucs `.onnx` model file. Set this once in [Settings](#11-settings); it persists across sessions.
-3. **Output** — folder where the `_stems/` directory will be written. Defaults to the `stem_output_dir` config path.
-4. Press **Separate**. A progress bar runs. Depending on track length and hardware, this takes 30 seconds to several minutes.
-5. Press **Cancel** at any time to abort without saving partial results.
-6. On completion, the four stem waveforms appear colour-coded below the panel.
+**Step 1 — Drop your file onto the track.**
+Drop a file onto Track A, B, C, or D. The stem panel immediately auto-fills with:
+- **Input:** the path to the file you just dropped
+- **Output:** the expected `_stems/` folder path (placed next to the source file)
 
-**CUDA toggle:** If you have an NVIDIA GPU with CUDA support, enabling this toggle routes inference through the GPU and can be 5–10× faster than CPU-only separation.
+You do not need to touch the Input or Output fields manually. They always reflect the most recently active track.
+
+**Step 2 — Set the Model path (once).**
+The **Model** field points to your local Demucs `.onnx` model file. Browse to it once; it is remembered between sessions.
+
+**Step 3 — Decide when to separate.**
+The stem panel is ready but nothing runs automatically. Demucs takes 30 seconds to several minutes per track, so you control when to commit. When you are ready:
+
+- Press **Separate** to begin. A progress bar shows inference progress.
+- Press **Cancel** at any time to abort cleanly (no partial files are saved).
+
+**Step 4 — Separation completes.**
+The four stem waveforms appear colour-coded below the panel. The stems are now registered against this track's slot — pressing SPLICE or AUTO SPLICE in Expertise Mode will use them.
+
+**Step 5 — Separate other tracks independently (optional).**
+Drop a file onto Track B. The stem panel updates to reflect Track B's paths. Separate it. Track A's stems are still registered — each track owns its slot permanently until you drop a new file.
+
+**CUDA toggle:** If you have an NVIDIA GPU, enable this toggle before pressing Separate. Inference routes through the GPU and can be 5–10× faster than CPU-only.
 
 ### Stems persist between sessions
 
-Stems are saved to `_stems/` next to the source audio file. On your next session, dragging that same file onto Track A re-registers its stems automatically — no re-separation needed.
+Stems are written to `_stems/` next to the source file. Drop that same file onto any track in a future session and its stems are detected and registered instantly — no re-separation needed.
 
 ---
 
@@ -327,12 +372,14 @@ All other file path configuration (stem model location, stem output folder, audi
 
 ### Workflow C — Expert stem blend (Expertise Mode)
 
-1. Drop your main track onto Track A.
-2. Hold **Cmd** to enter Expertise Mode. Fill in the stem model path if not already set.
-3. Press **Separate** and wait for Demucs to complete.
-4. Drop a second track onto Track B.
-5. Hold **Cmd** and press **AUTO SPLICE**.
-6. Use the four stem faders on Track A to shape the input mix (e.g., mute vocals before splicing for a more instrumental result).
+1. Drop **Song 1** onto Track A. The stem panel auto-fills with Track A's paths.
+2. Hold **Cmd** to enter Expertise Mode. Confirm the Model path is set (once per machine).
+3. Press **Separate** and wait for Demucs to finish Track A. The four colour-coded stem waveforms appear.
+4. Shape Track A's input mix using its four faders — for example, pull **Vocals** to 0 for an instrumental-only splice source.
+5. Drop **Song 2** onto Track B. The stem panel now reflects Track B's paths. Track A's stems remain registered.
+6. Press **Separate** again to separate Track B independently.
+7. Shape Track B's faders however you like (different from Track A — each track's faders are independent).
+8. Hold **Cmd** and press **AUTO SPLICE** to blend both tracks' shaped stem inputs into the final splice output.
 
 ### Tips
 
