@@ -375,7 +375,13 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (mainLoopBtn);
 
     addAndMakeVisible (autoSpliceButton);
-    autoSpliceButton.onClick = [this] { processorRef.applyAutoSplice(); };
+    autoSpliceButton.onClick = [this]
+    {
+        // Reset so the timer picks up the new result once the thread finishes
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        processorRef.applyAutoSplice();
+    };
     addAndMakeVisible (regenerateButton);
     regenerateButton.onClick = [this] { processorRef.regenerateMix(); };
     addAndMakeVisible (randomizeButton);
@@ -856,6 +862,17 @@ void PluginEditor::filesDropped (const juce::StringArray& files, int x, int)
                 auto outputDir = file.getParentDirectory()
                     .getChildFile (file.getFileNameWithoutExtension() + "_stems");
                 stemOutputEditor.setText (outputDir.getFullPathName());
+
+                // If stems already exist next to the file, wire them up so
+                // SPLICE can run immediately without re-running separation
+                const bool stemsExist = outputDir.isDirectory()
+                    && (outputDir.getChildFile ("drums.wav").existsAsFile()
+                        || outputDir.getChildFile ("bass.wav").existsAsFile());
+                if (stemsExist)
+                {
+                    processorRef.setLastStemOutputDir (outputDir);
+                    loadStemWaveforms();
+                }
             }
         }
         else
@@ -865,6 +882,16 @@ void PluginEditor::filesDropped (const juce::StringArray& files, int x, int)
             auto outputDir = file.getParentDirectory()
                 .getChildFile (file.getFileNameWithoutExtension() + "_stems");
             stemOutputEditor.setText (outputDir.getFullPathName());
+
+            // Same: if stems already exist, register the directory
+            const bool stemsExist = outputDir.isDirectory()
+                && (outputDir.getChildFile ("drums.wav").existsAsFile()
+                    || outputDir.getChildFile ("bass.wav").existsAsFile());
+            if (stemsExist)
+            {
+                processorRef.setLastStemOutputDir (outputDir);
+                loadStemWaveforms();
+            }
         }
         break; // handle one file per drop
     }
@@ -961,12 +988,34 @@ void PluginEditor::browseForStemOutput()
 void PluginEditor::startSpliceRemix()
 {
     auto stemsDir = processorRef.getLastStemOutputDir();
+
+    // Fall back to whatever path is in the output editor (set by file-drop or browse)
     if (stemsDir == juce::File{})
     {
-        spliceStatusLabel.setText ("No stems available — run separation first.",
-                                   juce::dontSendNotification);
+        auto editorPath = stemOutputEditor.getText();
+        if (editorPath.isNotEmpty())
+            stemsDir = juce::File (editorPath);
+    }
+
+    // Validate that stem files actually exist
+    const bool stemsPresent = stemsDir != juce::File{}
+                              && stemsDir.isDirectory()
+                              && (stemsDir.getChildFile ("drums.wav").existsAsFile()
+                                  || stemsDir.getChildFile ("bass.wav").existsAsFile());
+    if (! stemsPresent)
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "No Stems Found",
+            "Splice needs separated stem files (drums.wav / bass.wav / other.wav / vocals.wav).\n\n"
+            "Either:\n"
+            "  \xe2\x80\xa2 Run stem separation first (Separate button), or\n"
+            "  \xe2\x80\xa2 Drop a track whose sibling _stems/ folder already contains stems.");
         return;
     }
+
+    // Register the resolved directory so auto-splice and subsequent calls can find it
+    processorRef.setLastStemOutputDir (stemsDir);
 
     spliceLoaded = false;
     spliceOutputWaveform.clear();

@@ -144,6 +144,10 @@ public:
     void requestSplice (const juce::File& stemsDir, double sourceBPM, double targetBPM,
                         bool skipWarp = false, float density = 0.5f);
 
+    // Allows the editor to set the stems directory from a file drop or browse,
+    // so SPLICE can run without requiring in-session stem separation.
+    void setLastStemOutputDir (const juce::File& dir) { lastStemOutputDir_ = dir; }
+
     //==============================================================================
     // UX contract: Splice output playback
     //==============================================================================
