@@ -75,7 +75,7 @@ public:
         {
             g.setColour (juce::Colours::grey.withAlpha (0.4f));
             g.setFont (11.0f);
-            g.drawText ("No audio", drawArea, juce::Justification::centred);
+            g.drawText ("Drag and drop audio", drawArea, juce::Justification::centred);
         }
     }
 

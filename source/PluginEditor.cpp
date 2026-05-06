@@ -377,15 +377,29 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (autoSpliceButton);
     autoSpliceButton.onClick = [this]
     {
-        // Reset so the timer picks up the new result once the thread finishes
         spliceLoaded = false;
         spliceOutputWaveform.clear();
-        processorRef.applyAutoSplice();
+        if (isExpertiseMode_)
+            // Expert mode (Cmd held): use registered Demucs stems from one track
+            processorRef.applyAutoSplice();
+        else
+            // Simple mode: interleave active track + next loaded track, then splice
+            processorRef.applyAutoSpliceDualTrack();
     };
     addAndMakeVisible (regenerateButton);
-    regenerateButton.onClick = [this] { processorRef.regenerateMix(); };
+    regenerateButton.onClick = [this]
+    {
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        processorRef.regenerateMix();
+    };
     addAndMakeVisible (randomizeButton);
-    randomizeButton.onClick = [this] { processorRef.randomizeMix(); };
+    randomizeButton.onClick = [this]
+    {
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        processorRef.randomizeMix();
+    };
     addAndMakeVisible (recButton);
     recButton.onClick = [this] {
         if (isExpertiseMode_)
@@ -1004,14 +1018,22 @@ void PluginEditor::startSpliceRemix()
                                   || stemsDir.getChildFile ("bass.wav").existsAsFile());
     if (! stemsPresent)
     {
-        juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::WarningIcon,
-            "No Stems Found",
-            "Splice needs separated stem files (drums.wav / bass.wav / other.wav / vocals.wav).\n\n"
-            "Either:\n"
-            "  \xe2\x80\xa2 Run stem separation first (Separate button), or\n"
-            "  \xe2\x80\xa2 Drop a track whose sibling _stems/ folder already contains stems.");
-        return;
+        // Simple-mode fallback: beat-chop the active track directly (no stems needed)
+        if (processorRef.isActiveTrackLoaded())
+        {
+            processorRef.prepareSimpleSpliceDir();
+            stemsDir = processorRef.getLastStemOutputDir();
+        }
+
+        if (stemsDir == juce::File{} || ! stemsDir.getChildFile ("drums.wav").existsAsFile())
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "No Audio Loaded",
+                "Drop an audio file onto a track first.\n\n"
+                "For a full stem remix, hold Cmd to enter expert mode and run stem separation.");
+            return;
+        }
     }
 
     // Register the resolved directory so auto-splice and subsequent calls can find it

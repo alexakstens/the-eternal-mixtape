@@ -142,11 +142,25 @@ public:
     SpliceThread     spliceThread;
 
     void requestSplice (const juce::File& stemsDir, double sourceBPM, double targetBPM,
-                        bool skipWarp = false, float density = 0.5f);
+                        bool skipWarp = false, float density = 0.5f,
+                        bool randomizeTime = false, unsigned int seed = 42);
 
     // Allows the editor to set the stems directory from a file drop or browse,
     // so SPLICE can run without requiring in-session stem separation.
     void setLastStemOutputDir (const juce::File& dir) { lastStemOutputDir_ = dir; }
+
+    // Simple-mode: write the active track to a temp dir so SpliceThread can chop it
+    // without requiring Demucs stem separation. Sets lastStemOutputDir_ on success.
+    void prepareSimpleSpliceDir();
+
+    // True mixtape splice: interleaves the active track with the next loaded track
+    // at 2-bar (8-beat) boundaries, then hands the combined audio to SpliceThread.
+    // Falls back to single-track if only one track is loaded.
+    void prepareDualTrackSpliceDir();
+
+    // AUTO SPLICE for simple mode — always rebuilds dual-track interleave fresh
+    // so it picks up newly dropped files automatically.
+    void applyAutoSpliceDualTrack();
 
     //==============================================================================
     // UX contract: Splice output playback

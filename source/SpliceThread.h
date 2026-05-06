@@ -33,16 +33,20 @@ public:
     ~SpliceThread() override { stopThread (10000); }
 
     void configure (const juce::File& stemsDirectory,
-                    double sourceBPM,
-                    double targetBPM,
-                    bool   skipTimeWarp = false,
-                    float  density      = 0.5f)
+                    double       sourceBPM,
+                    double       targetBPM,
+                    bool         skipTimeWarp   = false,
+                    float        density        = 0.5f,
+                    bool         randomizeTime  = false,
+                    unsigned int seed           = 42)
     {
-        stemsDir = stemsDirectory;
-        srcBPM   = sourceBPM;
-        tgtBPM   = targetBPM;
-        skipWarp = skipTimeWarp;
-        density_ = juce::jlimit (0.0f, 1.0f, density);
+        stemsDir      = stemsDirectory;
+        srcBPM        = sourceBPM;
+        tgtBPM        = targetBPM;
+        skipWarp      = skipTimeWarp;
+        density_      = juce::jlimit (0.0f, 1.0f, density);
+        randomizeTime_ = randomizeTime;
+        seed_          = seed;
     }
 
     juce::File getMixedOutputFile() const { return stemsDir.getChildFile ("splice_output.wav"); }
@@ -131,9 +135,13 @@ public:
 
         const int numBeats      = (int) beatSamples.size();
         const int targetBeatLen = (int) (sampleRate * 60.0 / tgtBPM);
-        const int xfadeLen      = std::min (256, targetBeatLen / 8);
+        const int xfadeLen      = std::min (256, std::max (1, targetBeatLen / 8));
 
         progress.store (0.30f);
+
+        // Single RNG used for both beat shuffling and per-beat time warp.
+        // seed_ = 42 → reproducible (AUTO SPLICE); seeded from clock → unique (REGENERATE/RANDOMIZE)
+        std::mt19937 rng (seed_);
 
         // ── 3. Build shuffle permutation (density 0=none, 1=full random) ─────
         std::vector<int> perm (numBeats);
@@ -141,7 +149,6 @@ public:
 
         if (density_ > 0.0f && numBeats > 1)
         {
-            std::mt19937 rng (42);
             std::vector<int> shuffled (perm);
             std::shuffle (shuffled.begin(), shuffled.end(), rng);
 
@@ -155,8 +162,14 @@ public:
         status.store (Status::Chopping);
 
         const int numStems  = (int) allStems.size();
-        const int chunkLen  = skipWarp ? 0 : targetBeatLen; // 0 = variable
-        const int reserveN  = skipWarp ? totalSamples + 4096 : numBeats * targetBeatLen + 4096;
+        // When randomizing time each beat gets its own length, so reserve generously
+        const int reserveN  = skipWarp
+                                  ? totalSamples + 4096
+                                  : randomizeTime_ ? (int)(numBeats * targetBeatLen * 1.8f) + 4096
+                                                   : numBeats * targetBeatLen + 4096;
+
+        // Per-beat tempo factor distribution: 50% – 180% of target beat length
+        std::uniform_real_distribution<float> tempoVar (0.5f, 1.8f);
 
         // Per-stem stereo output: stemOut[stem][channel]
         std::vector<std::array<std::vector<float>, 2>> stemOut (numStems);
@@ -178,13 +191,21 @@ public:
             const int srcLen   = srcEnd - srcStart;
             if (srcLen <= 0) continue;
 
-            const int outChunkLen = skipWarp ? srcLen : targetBeatLen;
+            // Per-beat output length: fixed at targetBeatLen normally;
+            // randomly varied when randomizeTime_ is true (each beat plays faster or slower).
+            int outChunkLen;
+            if (skipWarp)
+                outChunkLen = srcLen;
+            else if (randomizeTime_)
+                outChunkLen = std::max (512, (int)(targetBeatLen * tempoVar (rng)));
+            else
+                outChunkLen = targetBeatLen;
 
             // Grow output buffers if needed
-            if (writePos + outChunkLen > reserveN)
+            if (writePos + outChunkLen > (int) stemOut[0][0].size())
                 for (auto& s : stemOut)
                     for (auto& ch : s)
-                        ch.resize (writePos + outChunkLen + 44100, 0.0f);
+                        ch.resize ((size_t)(writePos + outChunkLen + 44100), 0.0f);
 
             for (int si = 0; si < numStems; ++si)
             {
@@ -198,22 +219,23 @@ public:
                         for (int i = 0; i < outChunkLen; ++i)
                         {
                             int si2 = srcStart + i;
-                            stemOut[si][c][writePos + i] =
-                                (si2 < (int) src.size()) ? src[si2] : 0.0f;
+                            stemOut[si][c][(size_t)(writePos + i)] =
+                                (si2 < (int) src.size()) ? src[(size_t) si2] : 0.0f;
                         }
                     }
                     else
                     {
-                        const double ratio = (double)(srcLen - 1) / std::max (1, targetBeatLen - 1);
-                        for (int i = 0; i < targetBeatLen; ++i)
+                        // Interpolate: resample srcLen samples into outChunkLen samples
+                        const double ratio = (double)(srcLen - 1) / std::max (1, outChunkLen - 1);
+                        for (int i = 0; i < outChunkLen; ++i)
                         {
                             const double pos  = srcStart + i * ratio;
                             const int    lo   = (int) pos;
                             const int    hi   = std::min (lo + 1, (int) src.size() - 1);
                             const float  t    = (float)(pos - lo);
-                            const float  lo_v = (lo < (int) src.size()) ? src[lo] : 0.0f;
-                            const float  hi_v = (hi < (int) src.size()) ? src[hi] : 0.0f;
-                            stemOut[si][c][writePos + i] = lo_v * (1.0f - t) + hi_v * t;
+                            const float  lo_v = (lo < (int) src.size()) ? src[(size_t) lo] : 0.0f;
+                            const float  hi_v = (hi < (int) src.size()) ? src[(size_t) hi] : 0.0f;
+                            stemOut[si][c][(size_t)(writePos + i)] = lo_v * (1.0f - t) + hi_v * t;
                         }
                     }
                 }
@@ -334,10 +356,12 @@ public:
 
 private:
     juce::File   stemsDir;
-    double       srcBPM  = 0.0;
-    double       tgtBPM  = 120.0;
-    bool         skipWarp = false;
-    float        density_ = 0.5f;
+    double       srcBPM        = 0.0;
+    double       tgtBPM        = 120.0;
+    bool         skipWarp      = false;
+    float        density_      = 0.5f;
+    bool         randomizeTime_ = false; // RANDOMIZE mode: per-beat tempo variation
+    unsigned int seed_          = 42;    // 42 = reproducible; clock-seeded = unique each run
     double       detectedSrcBPM = 120.0;
 
     std::atomic<float>  progress { 0.0f };
