@@ -1,0 +1,1179 @@
+#include "PluginEditor.h"
+
+namespace
+{
+/** Pulled in from default slider layout — keeps rotary size, nudges BPM value 1 px toward the knob. */
+struct BpmValueNudgeLookAndFeel : juce::LookAndFeel_V4
+{
+    juce::Slider::SliderLayout getSliderLayout (juce::Slider& slider) override
+    {
+        auto layout = LookAndFeel_V4::getSliderLayout (slider);
+        layout.textBoxBounds.translate (0, -1);
+        return layout;
+    }
+};
+} // namespace
+
+//==============================================================================
+// Helper: load SVG states onto a DrawableButton (clears JUCE button background)
+static void applySVGImages (juce::DrawableButton& btn,
+                             const void* normalData,   int normalSize,
+                             const void* overData,     int overSize,
+                             const void* downData,     int downSize,
+                             const void* normalOnData  = nullptr, int normalOnSize  = 0,
+                             const void* overOnData    = nullptr, int overOnSize    = 0)
+{
+    auto mk = [] (const void* d, int s) -> std::unique_ptr<juce::Drawable>
+    {
+        if (d && s > 0)
+            return juce::Drawable::createFromImageData (d, (size_t) s);
+        return {};
+    };
+
+    auto normal   = mk (normalData,   normalSize);
+    auto over     = mk (overData,     overSize);
+    auto down     = mk (downData,     downSize);
+    auto normalOn = mk (normalOnData, normalOnSize);
+    auto overOn   = mk (overOnData,   overOnSize);
+
+    btn.setImages (normal.get(), over.get(), down.get(), nullptr,
+                   normalOn.get(), overOn.get(), nullptr, nullptr);
+
+    btn.setColour (juce::DrawableButton::backgroundColourId,   juce::Colours::transparentBlack);
+    btn.setColour (juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
+}
+
+PluginEditor::PluginEditor (PluginProcessor& p)
+    : AudioProcessorEditor (&p), processorRef (p)
+{
+    // Background image — single source of truth for the UI's visual layout.
+    // Aspect ratio matches the 1024x768 window (4:3); stretch-to-fit in paint().
+    uiImage = juce::ImageCache::getFromMemory (BinaryData::Backgorund_png,
+                                               BinaryData::Backgorund_pngSize);
+
+    // Tape title art — band below baked-in header copy (see resized()).
+    {
+        auto tape = juce::ImageCache::getFromMemory (BinaryData::tape_png,
+                                                     BinaryData::tape_pngSize);
+        tapeHeadlineImage.setImage (tape, juce::RectanglePlacement::centred
+                                          | juce::RectanglePlacement::onlyReduceInSize);
+        addAndMakeVisible (tapeHeadlineImage); // behind later controls (added first)
+    }
+
+    addAndMakeVisible (inspectButton);
+
+    inspectButton.onClick = [this] {
+        if (! inspector)
+        {
+            inspector = std::make_unique<melatonin::Inspector> (*this);
+            inspector->onClose = [this]() { inspector.reset(); };
+        }
+        inspector->setVisible (true);
+    };
+
+    // Runtime LED — sits in the orange digital-display slot baked into the cassette art.
+    auto runtimeFont = juce::Font (juce::FontOptions ("Menlo", kRuntimeFontPt, juce::Font::bold));
+    runtimeLabel.setJustificationType (juce::Justification::centred);
+    runtimeLabel.setFont (runtimeFont);
+    runtimeLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffa030));
+    addAndMakeVisible (runtimeLabel);
+
+    runtimeCaptionLabel.setJustificationType (juce::Justification::centred);
+    runtimeCaptionLabel.setFont (runtimeFont);
+    addAndMakeVisible (runtimeCaptionLabel);
+
+    // VU meter label is no longer drawn — kept for backward compat but invisible.
+    meterLabel.setText ("VU", juce::dontSendNotification);
+    meterLabel.setVisible (false);
+
+    static const char* const kTrackTitles[kNumTracks] =
+        { "Track A", "Track B", "Track C", "Track D" };
+
+    // ── Track label icons (trackA/B/C/D.png) ──
+    {
+        const struct { const void* data; int size; } trackIconAssets[kNumTracks] = {
+            { BinaryData::trackA_png, BinaryData::trackA_pngSize },
+            { BinaryData::trackB_png, BinaryData::trackB_pngSize },
+            { BinaryData::trackC_png, BinaryData::trackC_pngSize },
+            { BinaryData::trackD_png, BinaryData::trackD_pngSize },
+        };
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            auto img = juce::ImageCache::getFromMemory (trackIconAssets[t].data,
+                                                        trackIconAssets[t].size);
+            trackLabelIcons[t].setName (kTrackTitles[t]);
+            // Scale header art to fit (same contain behaviour as stem icons)
+            trackLabelIcons[t].setImage (img, juce::RectanglePlacement::centred
+                                              | juce::RectanglePlacement::onlyReduceInSize);
+            addAndMakeVisible (trackLabelIcons[t]);
+        }
+    }
+
+    // ── Per-track input waveforms (one per track, always visible) ──
+    {
+        const juce::uint32 trackColours[kNumTracks] = {
+            0xff64b5f6, // Track A — blue
+            0xffef9a9a, // Track B — red-pink
+            0xffa5d6a7, // Track C — green
+            0xffffcc80, // Track D — amber
+        };
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            trackInputWaveforms[t] = std::make_unique<WaveformDisplay> (formatManager,
+                                                                         kTrackTitles[t]);
+            trackInputWaveforms[t]->setName (kTrackTitles[t]);
+            trackInputWaveforms[t]->setWaveformColour (juce::Colour (trackColours[t]));
+            trackInputWaveforms[t]->onClick = [this, t] { selectWaveform (t); };
+            addAndMakeVisible (*trackInputWaveforms[t]);
+        }
+    }
+
+    spliceOutputWaveform.onClick = [this] { selectWaveform (4); };
+
+    // ── Stem icons above each fader: vocal / bass / others / drum ──
+    {
+        const struct { const void* data; int size; } stemIconAssets[kNumStemsPerTrack] = {
+            { BinaryData::vocal_png,  BinaryData::vocal_pngSize  },
+            { BinaryData::bass_png,   BinaryData::bass_pngSize   },
+            { BinaryData::others_png, BinaryData::others_pngSize },
+            { BinaryData::drum_png,   BinaryData::drum_pngSize   },
+        };
+        static const char* const kStemIconNames[kNumStemsPerTrack] =
+            { "Vocals", "Bass", "Other", "Drums" };
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            for (int s = 0; s < kNumStemsPerTrack; ++s)
+            {
+                auto img = juce::ImageCache::getFromMemory (stemIconAssets[s].data,
+                                                            stemIconAssets[s].size);
+                stemIcons[t][s].setName (juce::String (kTrackTitles[t]) + " — "
+                                         + kStemIconNames[s]);
+                // Full artwork, uniformly scaled down to fit the icon slot (no clipping)
+                stemIcons[t][s].setImage (
+                    img, juce::RectanglePlacement::centred
+                             | juce::RectanglePlacement::onlyReduceInSize);
+                addAndMakeVisible (stemIcons[t][s]);
+            }
+        }
+    }
+
+    // ── Tracks A–D: 4 vertical stem faders each ──
+    for (int i = 0; i < kNumTracks; ++i)
+    {
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+        {
+            auto& sl = trackStemSliders[i][s];
+            sl.setSliderStyle (juce::Slider::LinearVertical);
+            sl.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+            sl.setRange (0.0, 2.0, 0.01);
+            sl.setValue (1.0);
+            sl.onValueChange = [this, i, s] {
+                processorRef.setTrackStemGain (i, s, (float) trackStemSliders[i][s].getValue());
+                // Debounce: re-mix stems into the track buffer 300ms after the fader settles
+                stemGainDebounce_[i] = 3;
+            };
+            addAndMakeVisible (sl);
+        }
+    }
+
+    // Splice panel — Razor button + Skip Warp toggle
+    applySVGImages (spliceButton,
+                    BinaryData::Razor_off_svg,   BinaryData::Razor_off_svgSize,
+                    BinaryData::Razor_hover_svg, BinaryData::Razor_hover_svgSize,
+                    BinaryData::Razor_click_svg, BinaryData::Razor_click_svgSize);
+    addAndMakeVisible (spliceButton);
+    spliceButton.onClick = [this] { startSpliceRemix(); };
+
+    skipWarpToggle.setToggleState (false, juce::dontSendNotification);
+    skipWarpToggle.setTooltip ("Bypass time-stretching — mix stems at original tempo");
+    addChildComponent (skipWarpToggle); // hidden — exposed via Expertise mode later
+    bpmSlider.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+    bpmSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 48, 16);
+    bpmSlider.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
+                                   juce::MathConstants<float>::pi * 2.8f, true);
+    bpmSlider.setRange (20.0, 300.0, 1.0);
+    bpmSlider.setValue (processorRef.getGlobalBPM());
+    bpmSlider.onValueChange = [this] {
+        processorRef.setGlobalBPM (bpmSlider.getValue());
+        bpmChangeDebounceCounter_ = 5; // 5 × 100ms timer ticks = 500ms settle time
+    };
+    addAndMakeVisible (bpmSlider);
+    densitySlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    densitySlider.setTextBoxStyle (juce::Slider::TextBoxRight, true, 50, 20);
+    densitySlider.setRange (0.0, 1.0, 0.01);
+    densitySlider.setValue (processorRef.getSpliceDensity());
+    densitySlider.onValueChange = [this] { processorRef.setSpliceDensity ((float) densitySlider.getValue()); };
+    addAndMakeVisible (densitySlider);
+    addAndMakeVisible (densityLabel);
+
+    // Splice output waveform
+    spliceOutputWaveform.setWaveformColour (juce::Colour (0xffa78bfa));
+    addAndMakeVisible (spliceOutputWaveform);
+    spliceStatusLabel.setText ("Separate stems first, then SPLICE", juce::dontSendNotification);
+    spliceStatusLabel.setJustificationType (juce::Justification::centredLeft);
+    // Splice status + progress — not in V1.1 layout; hidden but kept wired for diagnostics.
+    addChildComponent (spliceStatusLabel);
+    addChildComponent (spliceProgressBar);
+
+    // Splice output transport buttons
+    applySVGImages (spliceBackBtn,
+                    BinaryData::Back_off_svg,   BinaryData::Back_off_svgSize,
+                    BinaryData::Back_hover_svg, BinaryData::Back_hover_svgSize,
+                    BinaryData::Back_on_svg,    BinaryData::Back_on_svgSize);
+    spliceBackBtn.onClick = [this] {
+        processorRef.rewindSpliceOutput();
+    };
+    addChildComponent (spliceBackBtn); // hidden — main transport reused in V1.1 layout
+
+    applySVGImages (splicePlayBtn,
+                    BinaryData::Play_off_svg,   BinaryData::Play_off_svgSize,
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,    // normalOn (playing)
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize); // overOn
+    splicePlayBtn.setClickingTogglesState (true);
+    splicePlayBtn.onClick = [this] {
+        if (splicePlayBtn.getToggleState())
+            processorRef.playSpliceOutput();
+        else
+            processorRef.stopSpliceOutput();
+    };
+    addChildComponent (splicePlayBtn);
+
+    applySVGImages (spliceStopBtn,
+                    BinaryData::Stop_off_svg,   BinaryData::Stop_off_svgSize,
+                    BinaryData::Stop_hover_svg, BinaryData::Stop_hover_svgSize,
+                    BinaryData::Stop_on_svg,    BinaryData::Stop_on_svgSize);
+    spliceStopBtn.onClick = [this] {
+        processorRef.stopSpliceOutput();
+        processorRef.rewindSpliceOutput();
+        splicePlayBtn.setToggleState (false, juce::dontSendNotification);
+    };
+    addChildComponent (spliceStopBtn);
+
+    applySVGImages (spliceForwardBtn,
+                    BinaryData::Forward_off_svg,   BinaryData::Forward_off_svgSize,
+                    BinaryData::Forward_hover_svg, BinaryData::Forward_hover_svgSize,
+                    BinaryData::Forward_on_svg,    BinaryData::Forward_on_svgSize);
+    spliceForwardBtn.onClick = [this] {
+        auto len = processorRef.getSpliceOutputLengthSeconds();
+        if (len > 0.0)
+            processorRef.seekSpliceOutput (len);
+    };
+    addChildComponent (spliceForwardBtn);
+
+    applySVGImages (spliceLoopBtn,
+                    BinaryData::Loop_off_svg,   BinaryData::Loop_off_svgSize,
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,    // normalOn
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize); // overOn
+    spliceLoopBtn.setClickingTogglesState (true);
+    spliceLoopBtn.onClick = [this] {
+        processorRef.setSpliceOutputLoop (spliceLoopBtn.getToggleState());
+    };
+    addChildComponent (spliceLoopBtn);
+
+    // Main transport — DrawableButton + SVG (mirrors the splice transport state machine)
+    addAndMakeVisible (settingsButton);
+    settingsButton.onClick = [this] {
+        fileChooser = std::make_unique<juce::FileChooser> ("Choose folder for exported files",
+                                                           processorRef.getConfigPath ("export_output_dir"));
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                      | juce::FileBrowserComponent::canSelectDirectories,
+                                  [this] (const juce::FileChooser& fc) {
+                                      if (fc.getResult() != juce::File{})
+                                          processorRef.setConfigPath ("export_output_dir", fc.getResult());
+                                  });
+    };
+
+    // Rewind: jump to start (momentary)
+    applySVGImages (mainRewindBtn,
+                    BinaryData::Back_off_svg,   BinaryData::Back_off_svgSize,
+                    BinaryData::Back_hover_svg, BinaryData::Back_hover_svgSize,
+                    BinaryData::Back_on_svg,    BinaryData::Back_on_svgSize);
+    mainRewindBtn.onClick = [this] {
+        const int prev = (processorRef.getActiveTrack() + kNumTracks - 1) % kNumTracks;
+        processorRef.setActiveTrack (prev);
+        processorRef.stop();
+        processorRef.stopSpliceOutput();
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        processorRef.setTransportPosition (0.0);
+        if (processorRef.isActiveTrackLoaded())
+        {
+            processorRef.play();
+            mainPlayBtn.setToggleState (true, juce::dontSendNotification);
+        }
+        else
+        {
+            mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+        }
+    };
+    addAndMakeVisible (mainRewindBtn);
+
+    // Play: toggle (off = stopped, on = playing)
+    applySVGImages (mainPlayBtn,
+                    BinaryData::Play_off_svg,   BinaryData::Play_off_svgSize,
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,
+                    BinaryData::Play_on_svg,    BinaryData::Play_on_svgSize,
+                    BinaryData::Play_hover_svg, BinaryData::Play_hover_svgSize);
+    mainPlayBtn.setClickingTogglesState (true);
+    mainPlayBtn.onClick = [this] {
+        if (mainPlayBtn.getToggleState())
+        {
+            if (spliceLoaded)
+            {
+                // Splice result ready: play it, silence the active track
+                processorRef.stop();
+                processorRef.playSpliceOutput();
+            }
+            else if (processorRef.getTransportTotalLengthSeconds() > 0.0)
+            {
+                processorRef.stopSpliceOutput();
+                processorRef.play();
+            }
+            else
+            {
+                mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+            }
+        }
+        else
+        {
+            processorRef.stop();
+            processorRef.stopSpliceOutput();
+        }
+    };
+    addAndMakeVisible (mainPlayBtn);
+
+    // Stop: stop + return to head (momentary)
+    applySVGImages (mainStopBtn,
+                    BinaryData::Stop_off_svg,   BinaryData::Stop_off_svgSize,
+                    BinaryData::Stop_hover_svg, BinaryData::Stop_hover_svgSize,
+                    BinaryData::Stop_on_svg,    BinaryData::Stop_on_svgSize);
+    mainStopBtn.onClick = [this] {
+        processorRef.stop();
+        processorRef.stopSpliceOutput();
+        processorRef.rewindSpliceOutput();
+        processorRef.setTransportPosition (0.0);
+        mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+    };
+    addAndMakeVisible (mainStopBtn);
+
+    // Forward: jump to end (momentary) — fixes the previous bug where this called stop()
+    applySVGImages (mainForwardBtn,
+                    BinaryData::Forward_off_svg,   BinaryData::Forward_off_svgSize,
+                    BinaryData::Forward_hover_svg, BinaryData::Forward_hover_svgSize,
+                    BinaryData::Forward_on_svg,    BinaryData::Forward_on_svgSize);
+    mainForwardBtn.onClick = [this] {
+        const int next = (processorRef.getActiveTrack() + 1) % kNumTracks;
+        processorRef.setActiveTrack (next);
+        processorRef.stop();
+        processorRef.stopSpliceOutput();
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        processorRef.setTransportPosition (0.0);
+        if (processorRef.isActiveTrackLoaded())
+        {
+            processorRef.play();
+            mainPlayBtn.setToggleState (true, juce::dontSendNotification);
+        }
+        else
+        {
+            mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+        }
+    };
+    addAndMakeVisible (mainForwardBtn);
+
+    // Loop: toggle (off = single play, on = loop)
+    applySVGImages (mainLoopBtn,
+                    BinaryData::Loop_off_svg,   BinaryData::Loop_off_svgSize,
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,
+                    BinaryData::Loop_on_svg,    BinaryData::Loop_on_svgSize,
+                    BinaryData::Loop_hover_svg, BinaryData::Loop_hover_svgSize);
+    mainLoopBtn.setClickingTogglesState (true);
+    mainLoopBtn.onClick = [this] {
+        processorRef.setLoopEnabled (mainLoopBtn.getToggleState());
+    };
+    addAndMakeVisible (mainLoopBtn);
+
+    addAndMakeVisible (autoSpliceButton);
+    autoSpliceButton.onClick = [this]
+    {
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        if (isExpertiseMode_)
+            // Expert mode (Cmd held): use registered Demucs stems from one track
+            processorRef.applyAutoSplice();
+        else
+            // Simple mode: interleave active track + next loaded track, then splice
+            processorRef.applyAutoSpliceDualTrack();
+    };
+    addAndMakeVisible (regenerateButton);
+    regenerateButton.onClick = [this]
+    {
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        processorRef.regenerateMix();
+    };
+    addAndMakeVisible (randomizeButton);
+    randomizeButton.onClick = [this]
+    {
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
+        processorRef.randomizeMix();
+    };
+    addAndMakeVisible (recButton);
+    recButton.onClick = [this] {
+        if (processorRef.isRecording())
+        {
+            // Second press — stop recording
+            auto tempFile = processorRef.stopRecordingAndSave();
+            recButton.setButtonText ("REC");
+            recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+            if (tempFile.existsAsFile() && recTargetTrack_ >= 0
+                && trackInputWaveforms[recTargetTrack_])
+                trackInputWaveforms[recTargetTrack_]->loadFile (tempFile);
+            recTargetTrack_ = -1;
+            return;
+        }
+
+        if (selectedWaveformIdx_ < 0 || selectedWaveformIdx_ > 3)
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::InfoIcon,
+                "REC",
+                "Click on a track waveform window (A, B, C, or D) to select it, then press REC to record from the audio input.");
+            return;
+        }
+
+        recTargetTrack_ = selectedWaveformIdx_;
+        if (! processorRef.startRecordingToTrack (recTargetTrack_))
+        {
+            recTargetTrack_ = -1;
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "No Audio Input",
+                "No audio input channels are available.\n\n"
+                "Open the Audio Settings (gear icon) and select an input device, "
+                "then try again. On macOS, you may also need to grant microphone "
+                "permission in System Settings \xe2\x86\x92 Privacy & Security \xe2\x86\x92 Microphone.");
+            return;
+        }
+        recButton.setButtonText ("STOP");
+        recButton.setColour (juce::TextButton::buttonColourId, juce::Colours::red);
+    };
+
+    // Stem separation panel
+    formatManager.registerBasicFormats();
+
+    for (auto* e : { &stemInputEditor, &stemModelEditor, &stemOutputEditor })
+        e->setReadOnly (true);
+
+    // Model path resolution order:
+    // 1. Next to the executable (distribution / installer layout)
+    // 2. demucs.onnx/onnx-models/ inside the source tree (dev build, injected by CMake)
+    const juce::String modelFilename = "htdemucs.onnx";
+    juce::File defaultModel = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
+                                  .getParentDirectory()
+                                  .getChildFile (modelFilename);
+    if (! defaultModel.existsAsFile())
+        defaultModel = juce::File (DEMUCS_ONNX_MODELS_DIR).getChildFile (modelFilename);
+    if (defaultModel.existsAsFile())
+        stemModelEditor.setText (defaultModel.getFullPathName());
+
+    for (auto* l : { &stemInputLabel, &stemModelLabel, &stemOutputLabel })
+    {
+        l->setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (l);
+    }
+    for (auto* e : { &stemInputEditor, &stemModelEditor, &stemOutputEditor })
+        addAndMakeVisible (e);
+
+    addAndMakeVisible (stemInputBrowse);
+    addAndMakeVisible (stemModelBrowse);
+    addAndMakeVisible (stemOutputBrowse);
+    stemInputBrowse.onClick  = [this] { browseForStemInput(); };
+    stemModelBrowse.onClick  = [this] { browseForStemModel(); };
+    stemOutputBrowse.onClick = [this] { browseForStemOutput(); };
+
+    addAndMakeVisible (stemProcessButton);
+    addAndMakeVisible (stemCancelButton);
+    stemCancelButton.setEnabled (false);
+    stemProcessButton.onClick = [this] { startStemSeparation(); };
+    stemCancelButton.onClick  = [this] { cancelStemSeparation(); };
+
+    stemCudaToggle.setToggleState (false, juce::dontSendNotification);
+    addAndMakeVisible (stemCudaToggle);
+    addAndMakeVisible (stemProgressBar);
+
+    stemStatusLabel.setText ("Ready", juce::dontSendNotification);
+    stemStatusLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (stemStatusLabel);
+
+    // Stem-separation output waveforms — only shown in Expertise mode overlay.
+    drumsWaveform.setWaveformColour  (juce::Colour (0xffe57373));
+    bassWaveform.setWaveformColour   (juce::Colour (0xff81c784));
+    otherWaveform.setWaveformColour  (juce::Colour (0xffffb74d));
+    vocalsWaveform.setWaveformColour (juce::Colour (0xff4fc3f7));
+    addAndMakeVisible (drumsWaveform);
+    addAndMakeVisible (bassWaveform);
+    addAndMakeVisible (otherWaveform);
+    addAndMakeVisible (vocalsWaveform);
+
+    // Colour theme — sampled from Backgorund.png (warm vintage palette).
+    const juce::Colour textColour   (0xffc8b896);
+    const juce::Colour accentColour (0xffF07030);
+    const juce::Colour panelDark    (0xff555555);
+
+    for (int i = 0; i < kNumTracks; ++i)
+    {
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+        {
+            trackStemSliders[i][s].setColour (juce::Slider::thumbColourId, accentColour);
+            trackStemSliders[i][s].setColour (juce::Slider::trackColourId, panelDark);
+        }
+    }
+    densityLabel.setColour      (juce::Label::textColourId, textColour);
+    runtimeLabel.setColour      (juce::Label::textColourId, juce::Colour (0xffffa030));
+    runtimeCaptionLabel.setColour (juce::Label::textColourId, textColour);
+    meterLabel.setColour        (juce::Label::textColourId, textColour);
+    spliceStatusLabel.setColour (juce::Label::textColourId, textColour);
+    stemStatusLabel.setColour   (juce::Label::textColourId, textColour);
+
+    bpmSlider.setColour     (juce::Slider::thumbColourId,             accentColour);
+    bpmSlider.setColour     (juce::Slider::rotarySliderFillColourId,  accentColour);
+    bpmSlider.setColour     (juce::Slider::textBoxTextColourId,       textColour);
+    bpmSlider.setColour     (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
+    bpmSliderLookAndFeel_   = std::make_unique<BpmValueNudgeLookAndFeel>();
+    bpmSlider.setLookAndFeel (bpmSliderLookAndFeel_.get());
+    densitySlider.setColour (juce::Slider::thumbColourId,             accentColour);
+    densitySlider.setColour (juce::Slider::trackColourId,             panelDark);
+
+    autoSpliceButton.setColour (juce::TextButton::buttonColourId, accentColour);
+    recButton.setColour        (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+
+    // Stem-separation panel is an "advanced" feature — hidden by default,
+    // revealed when the user holds Cmd/Ctrl (Expertise Mode).
+    setStemPanelVisible_ = [this] (bool v) {
+        // Stem separation controls + stem output waveforms — only in Expertise mode.
+        stemInputLabel.setVisible (v);
+        stemModelLabel.setVisible (v);
+        stemOutputLabel.setVisible (v);
+        stemInputEditor.setVisible (v);
+        stemModelEditor.setVisible (v);
+        stemOutputEditor.setVisible (v);
+        stemInputBrowse.setVisible (v);
+        stemModelBrowse.setVisible (v);
+        stemOutputBrowse.setVisible (v);
+        stemProcessButton.setVisible (v);
+        stemCancelButton.setVisible (v);
+        stemCudaToggle.setVisible (v);
+        stemProgressBar.setVisible (v);
+        stemStatusLabel.setVisible (v);
+        // Stem separation output waveforms shown in Expertise mode overlay (2×2 grid).
+        drumsWaveform.setVisible (v);
+        bassWaveform.setVisible (v);
+        otherWaveform.setVisible (v);
+        vocalsWaveform.setVisible (v);
+    };
+    setStemPanelVisible_ (false);
+
+    updateUIForMode();
+    startTimerHz (10);
+
+    setSize (1024, 768);
+}
+
+PluginEditor::~PluginEditor()
+{
+    bpmSlider.setLookAndFeel (nullptr);
+    stopTimer();
+}
+
+void PluginEditor::timerCallback()
+{
+    bool expert = juce::ModifierKeys::getCurrentModifiers().isCommandDown();
+    if (expert != isExpertiseMode_)
+    {
+        isExpertiseMode_ = expert;
+        updateUIForMode();
+    }
+
+    double pos = processorRef.getTransportPositionSeconds();
+    double len = processorRef.getTransportTotalLengthSeconds();
+    int pSec = (int) pos;
+    int pMin = pSec / 60;
+    pSec %= 60;
+    int lSec = (int) len;
+    int lMin = lSec / 60;
+    lSec %= 60;
+    runtimeLabel.setText (juce::String::formatted ("%d:%02d / %d:%02d", pMin, pSec, lMin, lSec),
+                          juce::dontSendNotification);
+    juce::ignoreUnused (processorRef.getMasterLevels()); // VU rendering removed; poll preserved
+
+    // Stem separation progress
+    auto& thread = processorRef.separationThread;
+    stemProgressValue = static_cast<double> (thread.getProgress());
+    bool isRunning = thread.isThreadRunning();
+    // Only overwrite the label while thread is active or has finished with a result;
+    // leave "Ready" showing when the thread has never been started (Idle + not running).
+    if (isRunning || thread.getStatus() != SeparationThread::Status::Idle)
+        stemStatusLabel.setText (thread.getStatusMessage(), juce::dontSendNotification);
+    stemProcessButton.setEnabled (! isRunning);
+    stemCancelButton.setEnabled (isRunning);
+
+    if (thread.getStatus() == SeparationThread::Status::Complete && ! stemsLoaded)
+        loadStemWaveforms();
+
+    // Splice thread polling
+    auto& sThread = processorRef.spliceThread;
+    spliceProgressValue = static_cast<double> (sThread.getProgress());
+    spliceStatusLabel.setText (sThread.getStatusMessage(), juce::dontSendNotification);
+    spliceButton.setEnabled (! sThread.isThreadRunning());
+
+    if (sThread.getStatus() == SpliceThread::Status::Complete && ! spliceLoaded)
+        loadSpliceOutputWaveform();
+
+    // BPM debounce: after the slider settles for ~500ms, trigger a background re-stretch
+    if (bpmChangeDebounceCounter_ > 0)
+    {
+        if (--bpmChangeDebounceCounter_ == 0)
+            processorRef.triggerBpmRestretch();
+    }
+
+    // Stem-gain debounce: 300ms after any fader settles, re-mix stems into the track buffer
+    // so that regular track playback immediately reflects the new stem balance.
+    for (int t = 0; t < 4; ++t)
+    {
+        if (stemGainDebounce_[t] > 0)
+        {
+            if (--stemGainDebounce_[t] == 0)
+                processorRef.remixTrackFromStems (t);
+        }
+    }
+
+    // Sync play button toggle with actual transport state
+    bool isPlaying = processorRef.isSpliceOutputPlaying();
+    if (splicePlayBtn.getToggleState() != isPlaying)
+        splicePlayBtn.setToggleState (isPlaying, juce::dontSendNotification);
+
+    // Main play button reflects whichever source is active: splice (if loaded) or active track
+    bool mainIsPlaying = spliceLoaded ? processorRef.isSpliceOutputPlaying()
+                                      : processorRef.isTransportPlaying();
+    if (mainPlayBtn.getToggleState() != mainIsPlaying)
+        mainPlayBtn.setToggleState (mainIsPlaying, juce::dontSendNotification);
+
+    // Detect when the recording buffer filled up and stopped automatically
+    if (recTargetTrack_ >= 0 && ! processorRef.isRecording())
+    {
+        auto tempFile = processorRef.stopRecordingAndSave();
+        recButton.setButtonText ("REC");
+        recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+        if (tempFile.existsAsFile() && trackInputWaveforms[recTargetTrack_])
+            trackInputWaveforms[recTargetTrack_]->loadFile (tempFile);
+        recTargetTrack_ = -1;
+    }
+
+    // Pulse the REC button colour while recording
+    if (processorRef.isRecording())
+    {
+        const bool blink = (juce::Time::getMillisecondCounter() / 500) % 2 == 0;
+        recButton.setColour (juce::TextButton::buttonColourId,
+                             blink ? juce::Colours::red : juce::Colour (0xff880000));
+    }
+
+    repaint();
+}
+
+void PluginEditor::updateUIForMode()
+{
+    if (isExpertiseMode_)
+    {
+        if (! processorRef.isRecording()) recButton.setButtonText ("REC");
+        if (setStemPanelVisible_) setStemPanelVisible_ (true);
+    }
+    else
+    {
+        if (! processorRef.isRecording()) recButton.setButtonText ("REC");
+        if (setStemPanelVisible_) setStemPanelVisible_ (false);
+    }
+    resized();
+}
+
+void PluginEditor::paint (juce::Graphics& g)
+{
+    if (uiImage.isValid())
+    {
+        g.drawImageWithin (uiImage, 0, 0, getWidth(), getHeight(),
+                           juce::RectanglePlacement::stretchToFit);
+    }
+    else
+    {
+        g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
+    }
+
+    // No VU overlay here — the multicolor waveform strip is baked into the background art,
+    // and the live level is reflected by spliceOutputWaveform.
+}
+
+void PluginEditor::resized()
+{
+    // Tape headline — y offset below top, 72 px side margins, 240 px tall band
+    constexpr int kTapeHeadlinePad = 72;
+    constexpr int kTapeHeadlineY   = 90; // clear baked-in header copy above the tape art
+    constexpr int kTapeHeadlineH   = 240;
+    tapeHeadlineImage.setBounds (kTapeHeadlinePad, kTapeHeadlineY,
+                                 juce::jmax (0, getWidth() - 2 * kTapeHeadlinePad),
+                                 kTapeHeadlineH);
+
+    // ── Layout constants ─────────────────────────────────────────────────────────
+    // Left gutter: SPLICE razor (~x 0–128). BPM rotary sits bottom-left (see kBpmLeftMargin).
+    constexpr int kGutterW = 120;
+    // Pinch the four-track band horizontally — columns sit closer together and the
+    // whole A–D group is shifted toward the window centre.
+    constexpr int kTrackBankPinch = 48;
+    constexpr int kTrack0X      = kGutterW + kTrackBankPinch;
+    constexpr int kTrackBankW   = (1024 - kGutterW) - 2 * kTrackBankPinch;
+    constexpr int kColW         = kTrackBankW / kNumTracks;
+    // Nudge track headers + stem icons + faders (not waveforms; not SPLICE/BPM vertical position).
+    constexpr int kTrackControlsShiftX = 5;
+    constexpr int kTrackControlsShiftY = 10; // not applied to SPLICE razor / BPM row
+
+    // ── Y zones (top of mixer area at y=356) ──────────────────────────────────
+    // Per-track input waveform windows (one per track, always visible)
+    constexpr int kWaveY = 356, kWaveH = 56;
+    for (int t = 0; t < kNumTracks; ++t)
+    {
+        if (trackInputWaveforms[t])
+            trackInputWaveforms[t]->setBounds (kTrack0X + t*kColW + 1, kWaveY, kColW - 2, kWaveH);
+    }
+
+    // Runtime LED — far left, in the margin to the left of Track A’s waveform (+20 px vs art slot).
+    // Two equal-height rows (time + RUNTIME), horizontally centred, share 24 pt Menlo bold.
+    constexpr int kRuntimeX     = 32;
+    constexpr int kRuntimeRight = kTrack0X - 8; // small gap before Track A
+    constexpr int kRuntimeW     = kRuntimeRight - kRuntimeX;
+    constexpr int kRuntimeCapGap = 2;
+    constexpr int kRuntimeLineH = (kWaveH - kRuntimeCapGap) / 2;
+    runtimeLabel.setBounds (kRuntimeX, kWaveY, kRuntimeW, kRuntimeLineH);
+    runtimeCaptionLabel.setBounds (kRuntimeX, kWaveY + kRuntimeLineH + kRuntimeCapGap,
+                                   kRuntimeW, kRuntimeLineH);
+
+    // Splice output waveform — width matches the pinched track bank
+    constexpr int kSpliceY = kWaveY + kWaveH + 4; // 416
+    spliceOutputWaveform.setBounds (kTrack0X, kSpliceY, kTrackBankW, 34);
+
+    // Track label icons (trackA/B/C/D.png) — below splice output
+    constexpr int kIconYBase = kSpliceY + 34 + 4;
+    constexpr int kIconY     = kIconYBase + kTrackControlsShiftY;
+    constexpr int kIconH = 28;
+    for (int t = 0; t < kNumTracks; ++t)
+        trackLabelIcons[t].setBounds (kTrack0X + t*kColW + 4 + kTrackControlsShiftX, kIconY,
+                                      kColW - 8, kIconH);
+
+    // Stem icons (vocal/bass/others/drum) — one per fader, above the fader
+    constexpr int kStemIconY = kIconY + kIconH + 2;
+    constexpr int kStemIconH = 28; // tall enough for scaled full artwork
+    constexpr int kFaderW    = 44, kFaderGap = 3;
+    // Side padding inside each column pulls Track A’s left edge right and Track D’s right edge left
+    constexpr int kColHPad   = 10;
+    constexpr int kGroupW    = kNumStemsPerTrack * kFaderW + (kNumStemsPerTrack-1) * kFaderGap;
+    for (int t = 0; t < kNumTracks; ++t)
+    {
+        const int gx = kTrack0X + t*kColW + kColHPad + kTrackControlsShiftX
+                       + (kColW - 2*kColHPad - kGroupW) / 2;
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+            stemIcons[t][s].setBounds (gx + s*(kFaderW + kFaderGap), kStemIconY,
+                                       kFaderW, kStemIconH);
+    }
+
+    // Stem faders — vertical, shorter than before
+    constexpr int kFaderY = kStemIconY + kStemIconH + 2;
+    constexpr int kFaderH = 88;
+    // SPLICE razor + BPM: BPM bottom-left anchored separately; only fader row alignment uses kFaderYAlignGutter here
+    constexpr int kFaderYAlignGutter = kIconYBase + kIconH + 2 + kStemIconH + 2;
+    for (int t = 0; t < kNumTracks; ++t)
+    {
+        const int gx = kTrack0X + t*kColW + kColHPad + kTrackControlsShiftX
+                       + (kColW - 2*kColHPad - kGroupW) / 2;
+        for (int s = 0; s < kNumStemsPerTrack; ++s)
+            trackStemSliders[t][s].setBounds (gx + s*(kFaderW + kFaderGap),
+                                              kFaderY, kFaderW, kFaderH);
+    }
+
+    // ── Left gutter controls ──────────────────────────────────────────────────
+    // SPLICE razor button — vertically aligned with the unshifted fader row (track sliders may sit lower)
+    spliceButton.setBounds (48, kFaderYAlignGutter - 12, 100, 100);
+
+    // BPM rotary — background art supplies the “BPM” caption; slider text box shows the value only.
+    // Anchored: kBpmLeftMargin from left, kBpmBottomMargin from bottom; L&F pulls value 1 px toward the rotary.
+    constexpr int kBpmSliderW         = 96;
+    constexpr int kBpmSliderH         = 76; // rotary + TextBoxBelow (matches setTextBoxStyle h)
+    constexpr int kBpmLeftMargin      = 44;
+    constexpr int kBpmBottomMargin    = 0;
+    bpmSlider.setBounds (kBpmLeftMargin,
+                         getHeight() - kBpmBottomMargin - kBpmSliderH,
+                         kBpmSliderW, kBpmSliderH);
+
+    // Density (hidden — parked off-screen)
+    densityLabel.setBounds  (0, 759, 1, 1);
+    densitySlider.setBounds (0, 759, 1, 1);
+
+    // ── Bottom controls ───────────────────────────────────────────────────────
+    constexpr int kBottomY = 708;
+    constexpr int kBottomCentreY = kBottomY - 15;
+    // Shared size for bottom TextButtons (Settings + AUTO SPLICE / … row)
+    constexpr int kRW = 120, kRH = 36, kRGap = 5;
+
+    // Bottom-left: gear + loop (nudged up + shifted right vs. original 8/58 @ kBottomY)
+    constexpr int kBottomLeftShiftX = 120; // 128 px from window left for Settings (5 px left of prior)
+    constexpr int kSettingsX        = 8 + kBottomLeftShiftX;
+    constexpr int kBottomLeftY      = kBottomCentreY + 5; // +5 px toward bottom edge
+    settingsButton.setBounds (kSettingsX, kBottomLeftY, kRW, kRH);
+    mainLoopBtn.setBounds    (kSettingsX + kRW + kRGap, kBottomLeftY, 40, 40);
+
+    // Centre transport — 4 buttons evenly spaced (nudged up vs. kBottomY)
+    constexpr int kTW = 68, kTH = 50, kTGap = 8;
+    constexpr int kTTotal = kNumTracks * kTW + (kNumTracks-1) * kTGap; // 296
+    constexpr int kTX0    = (1024 - kTTotal) / 2;                      // 364
+    mainRewindBtn.setBounds  (kTX0 + 0*(kTW+kTGap), kBottomCentreY, kTW, kTH);
+    mainStopBtn.setBounds    (kTX0 + 1*(kTW+kTGap), kBottomCentreY, kTW, kTH);
+    mainPlayBtn.setBounds    (kTX0 + 2*(kTW+kTGap), kBottomCentreY, kTW, kTH);
+    mainForwardBtn.setBounds (kTX0 + 3*(kTW+kTGap), kBottomCentreY, kTW, kTH);
+
+    // Bottom-right 2×2: AUTO SPLICE / REGENERATE / RANDOMIZE / REC (above centre row; shifted right)
+    constexpr int kRX1 = 766, kRX2 = kRX1 + kRW + kRGap; // +50 px vs prior right-column anchor
+    constexpr int kRightBottomShiftY = 10;
+    constexpr int kRY1 = kBottomCentreY - kRightBottomShiftY;
+    constexpr int kRY2 = kRY1 + kRH + kRGap;
+    autoSpliceButton.setBounds (kRX1, kRY1, kRW, kRH);
+    regenerateButton.setBounds (kRX2, kRY1, kRW, kRH);
+    randomizeButton.setBounds  (kRX1, kRY2, kRW, kRH);
+    recButton.setBounds        (kRX2, kRY2, kRW, kRH);
+
+    // ── Expertise mode: stem panel overlay (Cmd held) ─────────────────────────
+    if (isExpertiseMode_)
+    {
+        auto stemR = juce::Rectangle<int> (kTrack0X, 22, kTrackBankW, 330);
+        const int labelW = 60, browseW = 70, rowH = 26, gap = 4;
+
+        auto row1 = stemR.removeFromTop (rowH);
+        stemInputLabel.setBounds  (row1.removeFromLeft  (labelW));
+        stemInputBrowse.setBounds (row1.removeFromRight (browseW));
+        stemInputEditor.setBounds (row1);
+        stemR.removeFromTop (gap);
+
+        auto row2 = stemR.removeFromTop (rowH);
+        stemModelLabel.setBounds  (row2.removeFromLeft  (labelW));
+        stemModelBrowse.setBounds (row2.removeFromRight (browseW));
+        stemModelEditor.setBounds (row2);
+        stemR.removeFromTop (gap);
+
+        auto row3 = stemR.removeFromTop (rowH);
+        stemOutputLabel.setBounds  (row3.removeFromLeft  (labelW));
+        stemOutputBrowse.setBounds (row3.removeFromRight (browseW));
+        stemOutputEditor.setBounds (row3);
+        stemR.removeFromTop (gap);
+
+        auto ctlRow = stemR.removeFromTop (28);
+        stemCudaToggle.setBounds    (ctlRow.removeFromLeft (80));
+        ctlRow.removeFromLeft (8);
+        stemProcessButton.setBounds (ctlRow.removeFromLeft (90));
+        ctlRow.removeFromLeft (4);
+        stemCancelButton.setBounds  (ctlRow.removeFromLeft (90));
+        ctlRow.removeFromLeft (12);
+        stemProgressBar.setBounds   (ctlRow.removeFromLeft (200));
+        stemR.removeFromTop (gap);
+
+        stemStatusLabel.setBounds (stemR.removeFromTop (20));
+        stemR.removeFromTop (gap);
+
+        // 2×2 stem-separation output waveform grid
+        const int wH = (stemR.getHeight() - gap) / 2;
+        const int wW = (stemR.getWidth()  - gap) / 2;
+        auto t1 = stemR.removeFromTop (wH);
+        drumsWaveform.setBounds (t1.removeFromLeft (wW));
+        t1.removeFromLeft (gap);
+        bassWaveform.setBounds  (t1);
+        stemR.removeFromTop (gap);
+        auto t2 = stemR.removeFromTop (wH);
+        otherWaveform.setBounds (t2.removeFromLeft (wW));
+        t2.removeFromLeft (gap);
+        vocalsWaveform.setBounds (t2);
+    }
+
+    inspectButton.setBounds (getLocalBounds().removeFromBottom (22).removeFromRight (110));
+}
+
+//==============================================================================
+// Drag-and-drop
+bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (auto& f : files)
+    {
+        auto ext = juce::File (f).getFileExtension().toLowerCase();
+        if (ext == ".wav" || ext == ".mp3" || ext == ".aiff" || ext == ".flac")
+            return true;
+    }
+    return false;
+}
+
+void PluginEditor::filesDropped (const juce::StringArray& files, int x, int)
+{
+    // Determine which track column (A=0..D=3) the drop landed in.
+    // Mirrors the constants in resized() so we don't need runtime bounds queries.
+    constexpr int kGutterW        = 120;
+    constexpr int kTrackBankPinch = 48;
+    constexpr int kTrack0X        = kGutterW + kTrackBankPinch;              // 168
+    constexpr int kTrackBankW     = (1024 - kGutterW) - 2 * kTrackBankPinch; // 808
+    constexpr int kColW           = kTrackBankW / kNumTracks;                 // 202
+
+    int trackIdx = -1;
+    if (x >= kTrack0X && x < kTrack0X + kTrackBankW)
+        trackIdx = (x - kTrack0X) / kColW; // 0..3
+
+    for (auto& f : files)
+    {
+        auto ext = juce::File (f).getFileExtension().toLowerCase();
+        if (ext != ".wav" && ext != ".mp3" && ext != ".aiff" && ext != ".flac")
+            continue;
+
+        auto file = juce::File (f);
+
+        if (juce::isPositiveAndBelow (trackIdx, kNumTracks))
+        {
+            // Load file into the target track: waveform display + processor buffer.
+            // Make the dropped-on track active so the stem panel reflects it.
+            processorRef.setActiveTrack (trackIdx);
+            if (trackInputWaveforms[trackIdx])
+                trackInputWaveforms[trackIdx]->loadFile (file);
+            processorRef.loadTrackFile (trackIdx, file);
+
+            // Always update the stem panel to reflect this track's file, regardless
+            // of which slot it's in — the Separate button always acts on the active track.
+            stemInputEditor.setText (f);
+            auto outputDir = file.getParentDirectory()
+                .getChildFile (file.getFileNameWithoutExtension() + "_stems");
+            stemOutputEditor.setText (outputDir.getFullPathName());
+
+            // If a _stems/ folder already exists next to this file, register it
+            // against the track's slot so SPLICE can run immediately.
+            const bool stemsExist = outputDir.isDirectory()
+                && (outputDir.getChildFile ("drums.wav").existsAsFile()
+                    || outputDir.getChildFile ("bass.wav").existsAsFile());
+            if (stemsExist)
+            {
+                processorRef.setStemOutputDir (trackIdx, outputDir);
+                loadStemWaveforms();
+            }
+        }
+        else
+        {
+            // Dropped outside any track column — populate stem panel only.
+            stemInputEditor.setText (f);
+            auto outputDir = file.getParentDirectory()
+                .getChildFile (file.getFileNameWithoutExtension() + "_stems");
+            stemOutputEditor.setText (outputDir.getFullPathName());
+
+            const bool stemsExist = outputDir.isDirectory()
+                && (outputDir.getChildFile ("drums.wav").existsAsFile()
+                    || outputDir.getChildFile ("bass.wav").existsAsFile());
+            if (stemsExist)
+            {
+                processorRef.setLastStemOutputDir (outputDir);
+                loadStemWaveforms();
+            }
+        }
+        break; // handle one file per drop
+    }
+}
+
+//==============================================================================
+// Stem separation
+void PluginEditor::startStemSeparation()
+{
+    auto inputPath  = stemInputEditor.getText();
+    auto modelPath  = stemModelEditor.getText();
+    auto outputPath = stemOutputEditor.getText();
+
+    if (inputPath.isEmpty() || modelPath.isEmpty() || outputPath.isEmpty())
+    {
+        stemStatusLabel.setText ("Select input, model, and output first.", juce::dontSendNotification);
+        return;
+    }
+
+    stemsLoaded = false;
+    drumsWaveform.clear();
+    bassWaveform.clear();
+    otherWaveform.clear();
+    vocalsWaveform.clear();
+
+    processorRef.requestStemSeparation (juce::File (inputPath),
+                                        juce::File (modelPath),
+                                        juce::File (outputPath),
+                                        stemCudaToggle.getToggleState());
+}
+
+void PluginEditor::cancelStemSeparation()
+{
+    processorRef.separationThread.signalThreadShouldExit();
+    stemStatusLabel.setText ("Cancelling...", juce::dontSendNotification);
+}
+
+void PluginEditor::loadStemWaveforms()
+{
+    auto outputPath = stemOutputEditor.getText();
+    if (outputPath.isEmpty())
+        return;
+    auto dir = juce::File (outputPath);
+    if (dir.getChildFile ("drums.wav").existsAsFile())  drumsWaveform.loadFile  (dir.getChildFile ("drums.wav"));
+    if (dir.getChildFile ("bass.wav").existsAsFile())   bassWaveform.loadFile   (dir.getChildFile ("bass.wav"));
+    if (dir.getChildFile ("other.wav").existsAsFile())  otherWaveform.loadFile  (dir.getChildFile ("other.wav"));
+    if (dir.getChildFile ("vocals.wav").existsAsFile()) vocalsWaveform.loadFile (dir.getChildFile ("vocals.wav"));
+    stemsLoaded = true;
+}
+
+void PluginEditor::browseForStemInput()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Select audio file", juce::File(),
+                                                       "*.wav;*.mp3;*.aiff;*.flac");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (file.existsAsFile())
+            {
+                stemInputEditor.setText (file.getFullPathName());
+                stemOutputEditor.setText (file.getParentDirectory()
+                    .getChildFile (file.getFileNameWithoutExtension() + "_stems").getFullPathName());
+            }
+        });
+}
+
+void PluginEditor::browseForStemModel()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Select ONNX model", juce::File(), "*.onnx");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (file.existsAsFile())
+                stemModelEditor.setText (file.getFullPathName());
+        });
+}
+
+void PluginEditor::browseForStemOutput()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Select output directory", juce::File());
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto dir = fc.getResult();
+            if (dir != juce::File{})
+                stemOutputEditor.setText (dir.getFullPathName());
+        });
+}
+
+//==============================================================================
+// Splice remix
+void PluginEditor::startSpliceRemix()
+{
+    spliceLoaded = false;
+    spliceOutputWaveform.clear();
+
+    const double targetBPM = processorRef.getGlobalBPM();
+    const bool   skip      = skipWarpToggle.getToggleState();
+    const float  density   = (float) processorRef.getSpliceDensity();
+
+    if (isExpertiseMode_)
+    {
+        // Expert mode: splice using registered Demucs stems for the active track.
+        auto stemsDir = processorRef.getLastStemOutputDir();
+
+        // Fall back to path in editor if no dir registered yet
+        if (stemsDir == juce::File{})
+        {
+            auto editorPath = stemOutputEditor.getText();
+            if (editorPath.isNotEmpty())
+                stemsDir = juce::File (editorPath);
+        }
+
+        const bool stemsPresent = stemsDir != juce::File{}
+                                  && stemsDir.isDirectory()
+                                  && (stemsDir.getChildFile ("drums.wav").existsAsFile()
+                                      || stemsDir.getChildFile ("bass.wav").existsAsFile());
+        if (! stemsPresent)
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "No Stems Found",
+                "Run stem separation first (Expertise Mode), or drop an audio file onto a track.");
+            return;
+        }
+
+        processorRef.setLastStemOutputDir (stemsDir);
+        processorRef.requestSplice (stemsDir, 0.0, targetBPM, skip, density);
+    }
+    else
+    {
+        // Simple mode: always operate on the single active track.
+        if (! processorRef.isActiveTrackLoaded())
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "No Audio Loaded",
+                "Drop an audio file onto a track first.");
+            return;
+        }
+
+        // SPLICE razor always operates on the single active track only.
+        // Two-track operations are exclusively for AUTO SPLICE / REGENERATE / RANDOMIZE.
+        processorRef.prepareSimpleSpliceDir();
+
+        auto stemsDir = processorRef.getLastStemOutputDir();
+        if (stemsDir == juce::File{}) return;
+        processorRef.requestSplice (stemsDir, 0.0, targetBPM, skip, density);
+    }
+}
+
+void PluginEditor::loadSpliceOutputWaveform()
+{
+    auto stemsDir   = processorRef.getLastStemOutputDir();
+    auto mixedFile  = processorRef.spliceThread.getMixedOutputFile();
+
+    if (mixedFile.existsAsFile())
+        spliceOutputWaveform.forceReloadFile (mixedFile);
+
+    processorRef.loadSpliceOutput (stemsDir);
+    splicePlayBtn.setToggleState (false, juce::dontSendNotification);
+    spliceLoaded = true;
+}
+
+void PluginEditor::selectWaveform (int idx)
+{
+    // Toggle: clicking the already-selected waveform deselects it
+    if (idx == selectedWaveformIdx_)
+        idx = -1;
+
+    // If recording was active and we're deselecting, stop the recording
+    if (idx < 0 && processorRef.isRecording())
+    {
+        auto tempFile = processorRef.stopRecordingAndSave();
+        if (tempFile.existsAsFile() && recTargetTrack_ >= 0 && trackInputWaveforms[recTargetTrack_])
+            trackInputWaveforms[recTargetTrack_]->loadFile (tempFile);
+        recTargetTrack_ = -1;
+        recButton.setButtonText ("REC");
+        recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+    }
+
+    selectedWaveformIdx_ = idx;
+
+    for (int t = 0; t < kNumTracks; ++t)
+        if (trackInputWaveforms[t])
+            trackInputWaveforms[t]->setSelected (t == idx);
+
+    spliceOutputWaveform.setSelected (idx == 4);
+}

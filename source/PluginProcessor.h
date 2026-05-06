@@ -1,0 +1,271 @@
+#pragma once
+
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
+#include <map>
+#include <vector>
+#include "SeparationThread.h"
+#include "SpliceThread.h"
+
+#if (MSVC)
+#include "ipps.h"
+#endif
+
+class PluginProcessor : public juce::AudioProcessor
+{
+public:
+    PluginProcessor();
+    ~PluginProcessor() override;
+
+    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void releaseResources() override;
+
+    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    juce::AudioProcessorEditor* createEditor() override;
+    bool hasEditor() const override;
+
+    const juce::String getName() const override;
+
+    bool acceptsMidi() const override;
+    bool producesMidi() const override;
+    bool isMidiEffect() const override;
+    double getTailLengthSeconds() const override;
+
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
+    void changeProgramName (int index, const juce::String& newName) override;
+
+    void getStateInformation (juce::MemoryBlock& destData) override;
+    void setStateInformation (const void* data, int sizeInBytes) override;
+
+    //==============================================================================
+    // UX contract: Config (paths only; no hardcoded paths)
+    //==============================================================================
+    juce::File getConfigPath (const juce::String& key) const;
+    void setConfigPath (const juce::String& key, const juce::File& path);
+
+    //==============================================================================
+    // UX contract: Transport
+    //==============================================================================
+    void play();
+    void stop();
+    void setTransportPosition (double ratio);
+    double getTransportPositionSeconds() const;
+    double getTransportTotalLengthSeconds() const;
+    bool isTransportPlaying() const;
+    void setLoopEnabled (bool enabled);
+    void setLoopRegion (double startSec, double endSec);
+
+    //==============================================================================
+    // UX contract: Meters / display
+    //==============================================================================
+    float getMasterLevels() const;
+
+    //==============================================================================
+    // UX contract: Tracks (0..3 = A..D)
+    //==============================================================================
+    juce::File getTrackSourceFile (int trackIndex) const;
+    std::vector<juce::File> getTrackStemFiles (int trackIndex) const;
+    juce::String getTrackName (int trackIndex) const;
+    void setTrackName (int trackIndex, const juce::String& name);
+    void setTrackSource (int trackIndex, const juce::File& file);
+    void setTrackStemFile (int trackIndex, int stemSlot, const juce::File& file);
+    void setTrackStemIndices (int trackIndex, int stem1Index, int stem2Index);
+
+    // Load a file into a track's in-memory buffer for playback via mainPlayBtn.
+    // Safe to call from the message thread; the buffer is ready before returning.
+    void loadTrackFile (int trackIndex, const juce::File& file);
+
+    // Active track navigation (0 = A … 3 = D)
+    int  getActiveTrack() const noexcept;
+    void setActiveTrack (int trackIndex);
+    bool isActiveTrackLoaded() const noexcept;
+
+    // Trigger a background BPM re-stretch of the active track using TimeStretcher.
+    // Call this after the BPM slider has settled (debounced from the editor).
+    void triggerBpmRestretch();
+
+    //==============================================================================
+    // UX contract: Mix
+    //==============================================================================
+    void setTrackGain (int trackIndex, float gain);
+    float getTrackGain (int trackIndex) const;
+    void setTrackStemGain (int trackIndex, int stemIndex, float gain);
+    // Re-read stem files for a track, apply current stemGain[], and store the result in the
+    // track buffer so regular playback immediately reflects the new fader positions.
+    void remixTrackFromStems (int trackIndex);
+    void setTrackPan (int trackIndex, float pan);
+    void setTrackStemMute (int trackIndex, int stemIndex, bool muted);
+
+    //==============================================================================
+    // UX contract: Splice / BPM / Density
+    //==============================================================================
+    void applySplice (int trackIndex);
+    void setSpliceDensity (float density);
+    float getSpliceDensity() const;
+    void setGlobalBPM (double bpm);
+    double getGlobalBPM() const;
+
+    //==============================================================================
+    // UX contract: Actions
+    //==============================================================================
+    void applyAutoSplice();
+    void regenerateMix();
+    void randomizeMix();
+
+    // Export (used by REC when exporting splice/track to file)
+    void exportTrackToFile (int trackIdx, const juce::File& outputFile);
+    void exportSpliceOutputToFile (const juce::File& outputFile);
+
+    // Audio-input recording — replaces the selected track with captured audio
+    bool       startRecordingToTrack (int trackIdx); // returns false if no input channels available
+    juce::File stopRecordingAndSave();
+    bool       isRecording() const { return isRecording_.load(); }
+
+    //==============================================================================
+    // UX contract: Stem separation (progress/error for UI)
+    //==============================================================================
+    std::vector<juce::File> getLastStemFiles() const;
+    float getStemProgress() const;
+    juce::String getStemStatusMessage() const;
+    juce::String getStemErrorMessage() const;
+    void requestStemSeparation (const juce::File& inputFile,
+                                const juce::File& modelFile,
+                                const juce::File& outputDir,
+                                bool useCuda = false);
+
+    //==============================================================================
+    // UX contract: Analysis (stub: no result yet)
+    //==============================================================================
+    void runAnalysisAsync (const juce::File& file);
+    float getAnalysisProgress() const;
+    juce::String getLastAnalysisErrorMessage() const;
+
+    // Accessible from the editor for progress polling
+    SeparationThread separationThread;
+    SpliceThread     spliceThread;
+
+    void requestSplice (const juce::File& stemsDir, double sourceBPM, double targetBPM,
+                        bool skipWarp = false, float density = 0.5f,
+                        bool randomizeTime = false, unsigned int seed = 42);
+
+    // Per-track stem directory API.
+    // Each of the 4 tracks owns its own _stems/ directory once separation has run.
+    // Splice operations in Expertise Mode use these per-track dirs automatically.
+    juce::File getStemOutputDir (int trackIndex) const;
+    void       setStemOutputDir (int trackIndex, const juce::File& dir);
+
+    // Compatibility shims: operate on the active track's stem dir.
+    void setLastStemOutputDir (const juce::File& dir);
+    juce::File getLastStemOutputDir() const;
+
+    // Simple-mode: write the active track to a temp dir so SpliceThread can chop it
+    // without requiring Demucs stem separation. Sets stemOutputDirs_[activeTrack_] on success.
+    void prepareSimpleSpliceDir();
+
+    // AUTO SPLICE morph mode: A_body + beat-alternating transition zone + B_body.
+    // SpliceThread runs with density=0 (no shuffle) — only BPM-normalises.
+    // The alternating transition region IS the splice effect.
+    void prepareMorphTransitionDir();
+
+    // REGENERATE/RANDOMIZE mode: full interleave of both tracks over entire length.
+    // Passes the combined audio to SpliceThread with density=1.0 for a full shuffle.
+    // Falls back to single-track if only one track is loaded.
+    void prepareFullInterleaveSpliceDir();
+
+    // Returns the index of the next loaded track after activeTrack_, or -1 if none.
+    int findNextLoadedTrack() const;
+
+    // AUTO SPLICE for simple mode — morph transition between active track and next.
+    void applyAutoSpliceDualTrack();
+
+    //==============================================================================
+    // UX contract: Splice output playback
+    //==============================================================================
+    void loadSpliceOutput (const juce::File& outputDir);
+    void playSpliceOutput();
+    void stopSpliceOutput();
+    void rewindSpliceOutput();
+    void seekSpliceOutput (double positionSeconds);
+    void setSpliceOutputLoop (bool loop);
+    bool isSpliceOutputPlaying() const;
+    double getSpliceOutputPositionRatio() const;
+    double getSpliceOutputLengthSeconds() const;
+
+private:
+    void initDefaultConfigPaths();
+
+    std::map<juce::String, juce::File> configPaths_;
+    double transportPosition_ = 0.0;
+    double transportLengthSeconds_ = 0.0;
+    std::atomic<bool> isPlaying_ { false };
+    bool loopEnabled_ = false;
+    double loopStartSec_ = 0.0, loopEndSec_ = 0.0;
+    float masterLevel_ = 0.0f;
+    static constexpr int kNumTracks = 4;
+    struct TrackState
+    {
+        juce::String name;
+        juce::File sourceFile;
+        std::vector<juce::File> stemFiles;
+        float gain = 1.0f;
+        // 4 per-stem gains: [0]=Vocals, [1]=Bass, [2]=Other, [3]=Drums
+        float stemGain[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        float pan = 0.0f;
+        bool stemMute[4] = { false, false, false, false };
+    };
+    TrackState trackState_[kNumTracks];
+    double globalBPM_ = 120.0;
+    float spliceDensity_ = 0.5f;
+    // Per-track stem directories — each track has its own _stems/ folder once separated.
+    juce::File stemOutputDirs_[kNumTracks];
+    float analysisProgress_ = 0.0f;
+    juce::String lastAnalysisErrorMessage_;
+
+    // Splice output playback — 4 per-stem buffers mixed with track gains in processBlock
+    juce::SpinLock spliceLock_;
+    juce::AudioFormatManager spliceFormatManager_;
+    struct SpliceStemBuffer { juce::AudioBuffer<float> audio { 2, 0 }; bool valid = false; };
+    SpliceStemBuffer         spliceStems_[kNumTracks];
+    std::atomic<int64_t>     splicePlayPos_   { 0 };
+    std::atomic<bool>        spliceIsPlaying_ { false };
+    std::atomic<bool>        spliceIsLooping_ { false };
+    int64_t                  spliceTotalSamples_ = 0;
+    int                      spliceSampleRate_   = 44100;
+
+    // Per-track source-file playback — in-memory, same pattern as splice.
+    // Loaded on the message thread via loadTrackFile(); read on the audio thread.
+    juce::AudioFormatManager trackFormatManager_;
+    juce::SpinLock           trackLock_;
+    struct TrackBuffer
+    {
+        juce::AudioBuffer<float> audio { 2, 0 };
+        bool    valid        = false;
+        int     sampleRate   = 44100;
+        int64_t totalSamples = 0;
+    };
+    TrackBuffer           trackBuffers_[kNumTracks];       // play buffers (may be BPM-stretched)
+    TrackBuffer           trackOriginalBuffers_[kNumTracks]; // pristine originals for re-stretch
+    float                 trackSourceBPM_[kNumTracks];       // assumed source BPM (default 120)
+    std::atomic<int64_t>  trackPlayPos_ { 0 };
+    std::atomic<int>      activeTrack_  { 0 };              // which track A–D is currently active
+
+    // Performs a TimeStretcher pass on trackOriginalBuffers_[activeTrack_] at globalBPM_.
+    // Heavy work runs outside the spinlock; only the buffer swap takes the lock.
+    void restretchActiveTrack();
+
+    // Audio-input recording state (written on audio thread, read on UI thread)
+    static constexpr int     kMaxRecordSeconds = 300;
+    juce::AudioBuffer<float> recordBuffer_;
+    std::atomic<bool>        isRecording_     { false };
+    std::atomic<int>         recordingTrack_  { -1 };
+    std::atomic<int>         recordWritePos_  { 0 };
+    int                      recordSampleRate_ = 44100;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
+};

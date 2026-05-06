@@ -4,6 +4,67 @@ Final project for GT Audio Software Engineering MUSI6106, Spring 2026
 Authors: Alex Akstens, Ryan Baker, Matias Cevallos, Evelyne Li, Marcus Parker
 
 The Eternal Mixtape (TEM) is a audio plugin / app that gives an easy, accessible workflow for quickly creating remixes of songs.
+
+Made using the [Pamplejuce template](https://github.com/sudara/pamplejuce)
+
+---
+
+## Getting Started — Read This First
+
+### Step 1: Clone with submodules
+
+The project uses Git submodules (JUCE, etc.). You **must** clone like this:
+
+```bash
+git clone --recurse-submodules https://github.com/alexakstens/the-eternal-mixtape.git
+```
+
+Already cloned without submodules? Run this to fix it:
+
+```bash
+git submodule update --init --recursive
+```
+
+You will know something went wrong if the `JUCE/` folder is empty.
+
+---
+
+### Step 2 (Windows only): Set your personal VST3 folder
+
+> **Mac users: skip this step.** The build copies the plugin to `~/Library/Audio/Plug-Ins/VST3` automatically with no extra setup.
+
+On Windows, the build tries to copy the plugin to `C:\Program Files (x86)\Common Files\VST3`.
+That folder requires **admin rights** and the build will **fail with exit code 1** unless you do the following (or just run your IDE in admin mode, your mileage may vary).
+
+**Do this once, then never again:**
+
+1. In the root of the repo, find the file called `CMakeUserPresets.json.example`
+2. Make a copy of it in the same folder and rename the copy to `CMakeUserPresets.json`
+3. Open `CMakeUserPresets.json` and replace `YOUR_USERNAME` with your actual Windows username
+   - Not sure what your username is? Open a terminal and type `echo %USERNAME%`
+   - Example result: `"C:/Users/mparker/AppData/Roaming/VST3"`
+4. Save the file
+5. In VS Code, open the Command Palette (`Ctrl+Shift+P`), search for **CMake: Select Configure Preset**, and select **"Local User Settings"**
+6. Then run **CMake: Configure** (`Ctrl+Shift+P` → "CMake: Configure")
+
+> `CMakeUserPresets.json` is gitignored — it stays on your machine and will never be committed.
+> Every developer sets their own path.
+
+---
+
+### Step 3: Build
+
+- **VS Code:** Press `F7` or click **Build** in the bottom status bar
+- **Terminal:** `cmake --build build --config Debug`
+
+If the build succeeds, your plugin will appear in the VST3 folder you set above.
+Most DAWs (Reaper, Ableton, Bitwig, etc.) scan that folder automatically — just restart your DAW.
+
+---
+
+![Placeholder image](<assets/images/eternal mixtape_UI_V1.1.png>)
+
+---
 ## Motivation
 <!-- problem to be solved, why is there a need for this -->
 Creating a remix often requires using musical information such as key signature, tempo and chord changes. 
@@ -25,6 +86,14 @@ The interaction flows in this order:
     1) the user uploads audio files of different songs into the application
     2) the application parses the songs using offline audio analysis
     3) the user is presented with a low-complexity user interface that allows them to rearrange the song as they please
+
+## User Experience
+The user experience is designed to be **intuitive, engaging, and empowering**. The core of the application is a visual, block-based timeline where users can creatively arrange their mixtape.
+
+- **Simplified Workflow**: Users import songs, which are automatically analyzed for key, tempo, and structure, and then presented as colored blocks.
+- **Drag-and-Drop Canvas**: The main interaction involves dragging these musical blocks from a library onto a remix timeline to build a new sequence.
+- **Intelligent Assistance**: The application automatically handles complex tasks like tempo and pitch matching, allowing the user to focus on creativity.
+- **Immediate Auditory Feedback**: Changes made on the timeline are heard in real-time, creating a fluid and responsive experience.
 
 ## Plans for implementation:
 <!-- ### flow chart, processing blocks, needed components, potential need for 3rd party libs -->
@@ -67,15 +136,7 @@ The interaction flows in this order:
 
 
 **Audio Content Analysis**
-**Audio Content Analysis** 
-- To provide structural awareness, the analysis engine implements a multi-pass offline processing pipeline using the Aubio (https://aubio.org/) C library and custom linear algebra routines.
-- **Beat Tracking & Temporal Grid:** A temporal grid is established using a spectral-flux-based onset detection and a dynamic programming beat-tracking algorithm (`aubio_tempo`). This serves as the "atomic unit" for all subsequent structural jumps.
-- **Spectral Fingerprinting (MFCC):** For each detected beat, the system extracts a 13-coefficient Mel-Frequency Cepstral Coefficient (MFCC) vector. These vectors are aggregated via a mean-pooling strategy over the duration of the beat to create a stable "timbral fingerprint" for that specific musical moment.
-- **Self-Similarity Matrix (SSM):** A global similarity map is constructed by calculating the pairwise Euclidean distance between all beat-level MFCC vectors. This matrix is normalized to a [0.1] similarity scale, where $1.0$ indicates an identical timbral match.
-- **Structural Segmentation (Foote Novelty):** 
-    - The system implements a **Foote Novelty** algorithm by convolving the SSM with a Gaussian-tapered checkerboard kernel. 
-    - This identifies high-novelty "boundary" points (transitions between verse/chorus) by detecting changes in the local self-similarity texture.
-- **Probabilistic Transition Mapping:** The analysis identifies "jump points"—regions where non-sequential beats exhibit similarity above a defined threshold (typically $>0.90$). These points are stored in a transition graph used by the playback engine to create seamless, "infinite" remixes. This logic will be extended to remix two songs for transitioning to the next song in a playlist.
+- TODO
 
 **Tempo Warping**
 -  A simple time stretch will match section lengths between tracks at the cost of repitching (which will be corrected for in the next processing block), done by resampling the original audio file. This will cause pitch warping (lower pitch when slowed, higher pitch whern sped-up), but as long as the relative change can be tracked, it can be corrected for in pitch warping. The benefit of this approach is computational speed - resampling is much faster than other tempo-warping algorithms. If pitch warping is done offline, tempo warping can be included in the same implementation by playing FFT windows for longer/shorter.
@@ -171,7 +232,3 @@ Professional Mode exposes deeper control while maintaining strict interaction co
 │   (Source)    │   / GLOBAL    │  (Section)    │
 └───────────────┴───────────────┴───────────────┘
 ```
-
-
-
-
