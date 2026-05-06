@@ -72,7 +72,7 @@ private:
     juce::Label densityLabel { {}, "DENSITY" };
 
     // Splice output waveform (result of time-stretch remix)
-    WaveformDisplay spliceOutputWaveform { formatManager, "Splice Output" };
+    WaveformDisplay spliceOutputWaveform { formatManager, "Splice Output", "No audio" };
     double spliceProgressValue = 0.0;
     juce::ProgressBar spliceProgressBar { spliceProgressValue };
     juce::Label spliceStatusLabel;

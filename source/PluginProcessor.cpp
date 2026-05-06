@@ -669,16 +669,20 @@ void PluginProcessor::prepareDualTrackSpliceDir()
 {
     const int t1 = activeTrack_.load();
 
-    // Find the next loaded track after the active one
+    // Find the next loaded track after the active one.
+    // Acquire the lock once for the full scan to avoid missing a loaded track
+    // if the audio thread briefly holds trackLock_ between TryLock attempts.
     int t2 = -1;
-    for (int i = 1; i < kNumTracks; ++i)
     {
-        const int candidate = (t1 + i) % kNumTracks;
-        const juce::SpinLock::ScopedTryLockType tryLk (trackLock_);
-        if (tryLk.isLocked() && trackBuffers_[candidate].valid)
+        const juce::SpinLock::ScopedLockType lk (trackLock_);
+        for (int i = 1; i < kNumTracks; ++i)
         {
-            t2 = candidate;
-            break;
+            const int candidate = (t1 + i) % kNumTracks;
+            if (trackBuffers_[candidate].valid)
+            {
+                t2 = candidate;
+                break;
+            }
         }
     }
 

@@ -8,8 +8,10 @@ class WaveformDisplay : public juce::Component,
 {
 public:
     WaveformDisplay (juce::AudioFormatManager& formatManager,
-                     const juce::String& labelText = {})
+                     const juce::String& labelText = {},
+                     const juce::String& emptyPlaceholder = "Drag and drop audio")
         : label (labelText),
+          placeholderText (emptyPlaceholder),
           thumbnailCache (2),
           thumbnail (512, formatManager, thumbnailCache)
     {
@@ -75,7 +77,7 @@ public:
         {
             g.setColour (juce::Colours::grey.withAlpha (0.4f));
             g.setFont (11.0f);
-            g.drawText ("Drag and drop audio", drawArea, juce::Justification::centred);
+            g.drawText (placeholderText, drawArea, juce::Justification::centred);
         }
     }
 
@@ -86,6 +88,7 @@ public:
 
 private:
     juce::String label;
+    juce::String placeholderText;
     juce::Colour waveColour { 0xff4fc3f7 };
     juce::AudioThumbnailCache thumbnailCache;
     juce::AudioThumbnail thumbnail;
