@@ -1,6 +1,6 @@
 # The Eternal Mixtape — User Manual
 
-*Version 1.1 · GT MUSI6106 · Spring 2026*
+*Version 1.2 · GT MUSI6106 · Spring 2026*
 
 ---
 
@@ -190,16 +190,29 @@ Each of the four tracks has a mixer strip with four vertical faders, one per ste
 
 **Range:** 0 (silent) to 2.0 (double gain). Default is 1.0 (unity).
 
-**In Simple Mode:** The faders are visible but do not shape the audio yet — stem separation has not been run. Their settings are remembered so you can dial in the mix before separating.
+### Before stem separation
 
-**In Expertise Mode (Cmd held) — the faders become input shaping for splice:**
-Each fader controls its stem's contribution to whatever the splice engine receives. This is not a playback mixer — it shapes what goes *into* the splice operation:
+The faders are visible and their positions are stored, but they have no audible effect yet because no separated stem files exist for the track. Dial in a target balance before running Separate — the settings are remembered.
 
-- Pull Track A's **Vocals** fader to 0 before pressing SPLICE → the splice output contains no vocals from Track A (instrumental remix)
-- Boost Track B's **Drums** fader to 2.0 → Track B's drums are twice as prominent in the splice blend
-- Zero out all stems except **Bass** → the splice output is a bass-only remix
+### After stem separation — live remix
 
-Each track's four fader positions are independent. You can shape Track A and Track B differently before AUTO SPLICE blends them.
+Once Demucs has finished separating a track, the faders become **live**. Moving any fader triggers a re-mix of the four stem files using the new gain settings. Within ~300 ms the track's audio buffer is silently updated with the new balance — no need to press any other button.
+
+**Examples:**
+- Pull **Vocals** to 0 → the track now plays as an instrumental (no re-separation needed)
+- Push **Drums** to 2.0 → drums are twice as loud in both regular playback and any splice made from this track
+- Set **Bass** to 0 and **Other** to 0 → a drums + vocals arrangement
+
+This works the same whether the fader change is for the active track or for a background track. Each track's four fader positions are fully independent.
+
+### Faders also shape splice output
+
+When you run any splice operation (SPLICE, AUTO SPLICE, REGENERATE, RANDOMIZE), the active track's current fader positions are **baked into the splice output** — each stem is scaled by its gain before the beat-chopping pass. The result:
+
+- The splice output WAV already has the correct stem balance embedded
+- Real-time splice playback additionally applies the same gains as a final layer
+
+> **Tip:** Set your fader balance *before* pressing a splice button. Changing a fader after a splice will update track playback immediately but the existing splice output will not automatically regenerate — press the splice button again if you want the output to reflect the new balance.
 
 ---
 
@@ -305,21 +318,38 @@ Drop a file onto Track A, B, C, or D. The stem panel immediately auto-fills with
 You do not need to touch the Input or Output fields manually. They always reflect the most recently active track.
 
 **Step 2 — Set the Model path (once).**
-The **Model** field points to your local Demucs `.onnx` model file. Browse to it once; it is remembered between sessions.
+The **Model** field must point to the `htdemucs.onnx` file on your machine. Browse to it once; the path is remembered between sessions.
+
+> The model ships as two files that must stay in the same folder:
+> - `htdemucs.onnx` — the model graph (~2.6 MB)
+> - `htdemucs.onnx.data` — the model weights (~161 MB)
+>
+> **Always select `htdemucs.onnx` (not the `.data` file).** ONNX Runtime finds the weights automatically from the same directory.
 
 **Step 3 — Decide when to separate.**
-The stem panel is ready but nothing runs automatically. Demucs takes 30 seconds to several minutes per track, so you control when to commit. When you are ready:
+The stem panel is ready but nothing runs automatically. You control when to commit. When you are ready:
 
 - Press **Separate** to begin. A progress bar shows inference progress.
 - Press **Cancel** at any time to abort cleanly (no partial files are saved).
 
 **Step 4 — Separation completes.**
-The four stem waveforms appear colour-coded below the panel. The stems are now registered against this track's slot — pressing SPLICE or AUTO SPLICE in Expertise Mode will use them.
+The four stem waveforms appear colour-coded below the panel. The stems are now registered against this track's slot — pressing SPLICE or AUTO SPLICE in Expertise Mode will use them. The four stem faders for this track are now **live** (see [Per-Track Stem Faders](#7-per-track-stem-faders)).
 
 **Step 5 — Separate other tracks independently (optional).**
 Drop a file onto Track B. The stem panel updates to reflect Track B's paths. Separate it. Track A's stems are still registered — each track owns its slot permanently until you drop a new file.
 
-**CUDA toggle:** If you have an NVIDIA GPU, enable this toggle before pressing Separate. Inference routes through the GPU and can be 5–10× faster than CPU-only.
+**CUDA toggle:** Defaults to **OFF** (CPU inference). If you have an NVIDIA GPU with CUDA installed, enable this toggle before pressing Separate — GPU inference can be 5–10× faster.
+
+### Expected processing times
+
+| Phase | CPU (Apple Silicon M-series) | GPU (NVIDIA CUDA) |
+|---|---|---|
+| Model loading | 2–5 minutes | 30–90 seconds |
+| Inference (per 3-min track) | 15–45 minutes | 1–5 minutes |
+
+The status bar shows the current phase: *Loading model on CPU...*, *Loading audio...*, *Resampling...*, *Processing (N%)*, *Writing stems...*, *Complete!*
+
+Model loading only happens once per press of Separate — if you separate multiple tracks in the same session, subsequent separations skip the loading phase and go straight to inference.
 
 ### Stems persist between sessions
 
@@ -391,13 +421,15 @@ All other file path configuration (stem model location, stem output folder, audi
 ### Workflow C — Expert stem blend (Expertise Mode)
 
 1. Drop **Song 1** onto Track A. The stem panel auto-fills with Track A's paths.
-2. Hold **Cmd** to enter Expertise Mode. Confirm the Model path is set (once per machine).
-3. Press **Separate** and wait for Demucs to finish Track A. The four colour-coded stem waveforms appear.
-4. Shape Track A's input mix using its four faders — for example, pull **Vocals** to 0 for an instrumental-only splice source.
+2. Hold **Cmd** to enter Expertise Mode. Confirm the Model path points to `htdemucs.onnx` (set once per machine).
+3. Press **Separate** and wait. Demucs loads the model first (2–5 min on CPU), then runs inference. The four colour-coded stem waveforms appear when complete.
+4. The stem faders for Track A are now live. Adjust them — for example pull **Vocals** to 0 for an instrumental source. You hear the change in Track A's playback within ~300 ms.
 5. Drop **Song 2** onto Track B. The stem panel now reflects Track B's paths. Track A's stems remain registered.
-6. Press **Separate** again to separate Track B independently.
-7. Shape Track B's faders however you like (different from Track A — each track's faders are independent).
-8. Hold **Cmd** and press **AUTO SPLICE** to blend both tracks' shaped stem inputs into the final splice output.
+6. Press **Separate** to separate Track B. Model loading is skipped this time — inference runs immediately.
+7. Shape Track B's faders independently.
+8. Hold **Cmd** and press **AUTO SPLICE** to blend both tracks' stem inputs. The fader positions from both tracks are baked into the output.
+
+> **Note on CPU processing times:** The first Separate press in a session loads the model (several minutes), then runs inference. Plan for a long wait on CPU hardware. Once complete, stem data is cached on disk — future sessions with the same files skip the Demucs pass entirely.
 
 ### Workflow D — Record live audio into a track
 
@@ -416,6 +448,9 @@ All other file path configuration (stem model location, stem output folder, audi
 - **Stems save time.** Separate once; the `_stems/` folder is auto-detected every future session so you never re-run the slow Demucs pass.
 - **BPM mismatch is a feature.** Splicing a 90 BPM track at 180 BPM produces a double-time glitch effect. Splicing at 45 BPM produces a half-time woozy feel. Both can be musically compelling.
 - **REC replaces a track.** Select the target waveform panel first (orange border appears), then press REC. The recording replaces that track's audio — it does not record the Splice Output.
+- **Faders → re-splice.** After moving a stem fader, wait ~300 ms for the track buffer to update, *then* press your splice button. The baked output will carry your new balance.
+- **CUDA is OFF by default.** Enable the CUDA toggle only if you have an NVIDIA GPU with working CUDA drivers. On Apple Silicon Macs, always leave it OFF — CUDA is not available; all inference runs on CPU.
+- **Model path = the `.onnx` file.** Always browse to `htdemucs.onnx`, not a folder and not the `.onnx.data` file. ORT locates the weights automatically from the same directory.
 
 ---
 
@@ -447,7 +482,9 @@ All other file path configuration (stem model location, stem output folder, audi
 
 **Stem** — An isolated audio layer produced by Demucs: Drums, Bass, Vocals, or Other.
 
-**Stem separation** — The offline process of running Demucs to split a full mix into its four constituent stems. CPU time varies from ~30 seconds to several minutes depending on track length and hardware; GPU (CUDA) is significantly faster.
+**Stem fader** — A per-stem vertical gain slider (0–2.0) under each track. After separation, moving a fader re-mixes that track's stems in ~300 ms, updating both live playback and any subsequent splice output. Positions are stored per track and baked into splice operations.
+
+**Stem separation** — The offline process of running Demucs to split a full mix into its four constituent stems. Consists of two phases: model loading (2–5 min on CPU, once per session) and inference (varies with track length). GPU (CUDA) is significantly faster for both phases. Results are saved to disk and auto-detected in future sessions.
 
 ---
 
