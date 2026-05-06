@@ -129,5 +129,12 @@ private:
     // BPM debounce: counts down at 10 Hz; triggers re-stretch when it reaches 0
     int bpmChangeDebounceCounter_ = 0;
 
+    // REC selection: -1 = none, 0–3 = track panels, 4 = splice output
+    int selectedWaveformIdx_ = -1;
+    void selectWaveform (int idx);
+
+    // Track being recorded into (-1 when idle)
+    int recTargetTrack_ = -1;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

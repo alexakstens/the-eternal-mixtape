@@ -141,7 +141,10 @@ juce_add_plugin("${PROJECT_NAME}"
     FORMATS "${FORMATS}"
     PRODUCT_NAME "${PRODUCT_NAME}"
     # Need file dialog access
-    NEEDS_STORE_KIT FALSE)
+    NEEDS_STORE_KIT FALSE
+    # Allow REC button to capture audio input on macOS
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "The Eternal Mixtape needs microphone access to record audio into track slots.")
 
 # SharedCode interface library (pamplejuce pattern)
 add_library(SharedCode INTERFACE)

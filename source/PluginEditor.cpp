@@ -123,9 +123,12 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                                                                          kTrackTitles[t]);
             trackInputWaveforms[t]->setName (kTrackTitles[t]);
             trackInputWaveforms[t]->setWaveformColour (juce::Colour (trackColours[t]));
+            trackInputWaveforms[t]->onClick = [this, t] { selectWaveform (t); };
             addAndMakeVisible (*trackInputWaveforms[t]);
         }
     }
+
+    spliceOutputWaveform.onClick = [this] { selectWaveform (4); };
 
     // ── Stem icons above each fader: vocal / bass / others / drum ──
     {
@@ -291,6 +294,9 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         const int prev = (processorRef.getActiveTrack() + kNumTracks - 1) % kNumTracks;
         processorRef.setActiveTrack (prev);
         processorRef.stop();
+        processorRef.stopSpliceOutput();
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
         processorRef.setTransportPosition (0.0);
         if (processorRef.isActiveTrackLoaded())
         {
@@ -315,14 +321,26 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     mainPlayBtn.onClick = [this] {
         if (mainPlayBtn.getToggleState())
         {
-            if (processorRef.getTransportTotalLengthSeconds() > 0.0)
+            if (spliceLoaded)
+            {
+                // Splice result ready: play it, silence the active track
+                processorRef.stop();
+                processorRef.playSpliceOutput();
+            }
+            else if (processorRef.getTransportTotalLengthSeconds() > 0.0)
+            {
+                processorRef.stopSpliceOutput();
                 processorRef.play();
+            }
             else
+            {
                 mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+            }
         }
         else
         {
             processorRef.stop();
+            processorRef.stopSpliceOutput();
         }
     };
     addAndMakeVisible (mainPlayBtn);
@@ -334,6 +352,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                     BinaryData::Stop_on_svg,    BinaryData::Stop_on_svgSize);
     mainStopBtn.onClick = [this] {
         processorRef.stop();
+        processorRef.stopSpliceOutput();
+        processorRef.rewindSpliceOutput();
         processorRef.setTransportPosition (0.0);
         mainPlayBtn.setToggleState (false, juce::dontSendNotification);
     };
@@ -348,6 +368,9 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         const int next = (processorRef.getActiveTrack() + 1) % kNumTracks;
         processorRef.setActiveTrack (next);
         processorRef.stop();
+        processorRef.stopSpliceOutput();
+        spliceLoaded = false;
+        spliceOutputWaveform.clear();
         processorRef.setTransportPosition (0.0);
         if (processorRef.isActiveTrackLoaded())
         {
@@ -402,22 +425,43 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     };
     addAndMakeVisible (recButton);
     recButton.onClick = [this] {
-        if (isExpertiseMode_)
+        if (processorRef.isRecording())
         {
-            fileChooser = std::make_unique<juce::FileChooser> ("Save recording",
-                                                               processorRef.getConfigPath ("export_output_dir"),
-                                                               "*.wav");
-            fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
-                                          | juce::FileBrowserComponent::canSelectFiles,
-                                      [this] (const juce::FileChooser& fc) {
-                                          if (fc.getResult() != juce::File{})
-                                              processorRef.startRecording (fc.getResult());
-                                      });
+            // Second press — stop recording
+            auto tempFile = processorRef.stopRecordingAndSave();
+            recButton.setButtonText ("REC");
+            recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+            if (tempFile.existsAsFile() && recTargetTrack_ >= 0
+                && trackInputWaveforms[recTargetTrack_])
+                trackInputWaveforms[recTargetTrack_]->loadFile (tempFile);
+            recTargetTrack_ = -1;
+            return;
         }
-        else
+
+        if (selectedWaveformIdx_ < 0 || selectedWaveformIdx_ > 3)
         {
-            processorRef.startRecording();
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::InfoIcon,
+                "REC",
+                "Click on a track waveform window (A, B, C, or D) to select it, then press REC to record from the audio input.");
+            return;
         }
+
+        recTargetTrack_ = selectedWaveformIdx_;
+        if (! processorRef.startRecordingToTrack (recTargetTrack_))
+        {
+            recTargetTrack_ = -1;
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "No Audio Input",
+                "No audio input channels are available.\n\n"
+                "Open the Audio Settings (gear icon) and select an input device, "
+                "then try again. On macOS, you may also need to grant microphone "
+                "permission in System Settings \xe2\x86\x92 Privacy & Security \xe2\x86\x92 Microphone.");
+            return;
+        }
+        recButton.setButtonText ("\xe2\x96\xa0 STOP");
+        recButton.setColour (juce::TextButton::buttonColourId, juce::Colours::red);
     };
 
     // Stem separation panel
@@ -600,10 +644,30 @@ void PluginEditor::timerCallback()
     if (splicePlayBtn.getToggleState() != isPlaying)
         splicePlayBtn.setToggleState (isPlaying, juce::dontSendNotification);
 
-    // Same for the main transport — playback may stop on its own (end-of-buffer, DAW)
-    bool mainIsPlaying = processorRef.isTransportPlaying();
+    // Main play button reflects whichever source is active: splice (if loaded) or active track
+    bool mainIsPlaying = spliceLoaded ? processorRef.isSpliceOutputPlaying()
+                                      : processorRef.isTransportPlaying();
     if (mainPlayBtn.getToggleState() != mainIsPlaying)
         mainPlayBtn.setToggleState (mainIsPlaying, juce::dontSendNotification);
+
+    // Detect when the recording buffer filled up and stopped automatically
+    if (recTargetTrack_ >= 0 && ! processorRef.isRecording())
+    {
+        auto tempFile = processorRef.stopRecordingAndSave();
+        recButton.setButtonText ("REC");
+        recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+        if (tempFile.existsAsFile() && trackInputWaveforms[recTargetTrack_])
+            trackInputWaveforms[recTargetTrack_]->loadFile (tempFile);
+        recTargetTrack_ = -1;
+    }
+
+    // Pulse the REC button colour while recording
+    if (processorRef.isRecording())
+    {
+        const bool blink = (juce::Time::getMillisecondCounter() / 500) % 2 == 0;
+        recButton.setColour (juce::TextButton::buttonColourId,
+                             blink ? juce::Colours::red : juce::Colour (0xff880000));
+    }
 
     repaint();
 }
@@ -612,12 +676,12 @@ void PluginEditor::updateUIForMode()
 {
     if (isExpertiseMode_)
     {
-        recButton.setButtonText ("REC (choose file)");
+        if (! processorRef.isRecording()) recButton.setButtonText ("REC");
         if (setStemPanelVisible_) setStemPanelVisible_ (true);
     }
     else
     {
-        recButton.setButtonText ("REC");
+        if (! processorRef.isRecording()) recButton.setButtonText ("REC");
         if (setStemPanelVisible_) setStemPanelVisible_ (false);
     }
     resized();
@@ -1001,53 +1065,64 @@ void PluginEditor::browseForStemOutput()
 // Splice remix
 void PluginEditor::startSpliceRemix()
 {
-    auto stemsDir = processorRef.getLastStemOutputDir();
+    spliceLoaded = false;
+    spliceOutputWaveform.clear();
 
-    // Fall back to whatever path is in the output editor (set by file-drop or browse)
-    if (stemsDir == juce::File{})
-    {
-        auto editorPath = stemOutputEditor.getText();
-        if (editorPath.isNotEmpty())
-            stemsDir = juce::File (editorPath);
-    }
+    const double targetBPM = processorRef.getGlobalBPM();
+    const bool   skip      = skipWarpToggle.getToggleState();
+    const float  density   = (float) processorRef.getSpliceDensity();
 
-    // Validate that stem files actually exist
-    const bool stemsPresent = stemsDir != juce::File{}
-                              && stemsDir.isDirectory()
-                              && (stemsDir.getChildFile ("drums.wav").existsAsFile()
-                                  || stemsDir.getChildFile ("bass.wav").existsAsFile());
-    if (! stemsPresent)
+    if (isExpertiseMode_)
     {
-        // Simple-mode fallback: beat-chop the active track directly (no stems needed)
-        if (processorRef.isActiveTrackLoaded())
+        // Expert mode: splice using registered Demucs stems for the active track.
+        auto stemsDir = processorRef.getLastStemOutputDir();
+
+        // Fall back to path in editor if no dir registered yet
+        if (stemsDir == juce::File{})
         {
-            processorRef.prepareSimpleSpliceDir();
-            stemsDir = processorRef.getLastStemOutputDir();
+            auto editorPath = stemOutputEditor.getText();
+            if (editorPath.isNotEmpty())
+                stemsDir = juce::File (editorPath);
         }
 
-        if (stemsDir == juce::File{} || ! stemsDir.getChildFile ("drums.wav").existsAsFile())
+        const bool stemsPresent = stemsDir != juce::File{}
+                                  && stemsDir.isDirectory()
+                                  && (stemsDir.getChildFile ("drums.wav").existsAsFile()
+                                      || stemsDir.getChildFile ("bass.wav").existsAsFile());
+        if (! stemsPresent)
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "No Stems Found",
+                "Run stem separation first (Expertise Mode), or drop an audio file onto a track.");
+            return;
+        }
+
+        processorRef.setLastStemOutputDir (stemsDir);
+        processorRef.requestSplice (stemsDir, 0.0, targetBPM, skip, density);
+    }
+    else
+    {
+        // Simple mode: use both loaded tracks (interleaved) if a second track exists,
+        // otherwise fall back to the single active track.
+        if (! processorRef.isActiveTrackLoaded())
         {
             juce::AlertWindow::showMessageBoxAsync (
                 juce::MessageBoxIconType::WarningIcon,
                 "No Audio Loaded",
-                "Drop an audio file onto a track first.\n\n"
-                "For a full stem remix, hold Cmd to enter expert mode and run stem separation.");
+                "Drop an audio file onto a track first.");
             return;
         }
+
+        if (processorRef.findNextLoadedTrack() >= 0)
+            processorRef.prepareFullInterleaveSpliceDir();
+        else
+            processorRef.prepareSimpleSpliceDir();
+
+        auto stemsDir = processorRef.getLastStemOutputDir();
+        if (stemsDir == juce::File{}) return;
+        processorRef.requestSplice (stemsDir, 0.0, targetBPM, skip, density);
     }
-
-    // Register the resolved directory so auto-splice and subsequent calls can find it
-    processorRef.setLastStemOutputDir (stemsDir);
-
-    spliceLoaded = false;
-    spliceOutputWaveform.clear();
-
-    // sourceBPM = 0.0 → auto-detect via BeatAnalyzer in SpliceThread
-    const double targetBPM = processorRef.getGlobalBPM();
-    const bool   skip      = skipWarpToggle.getToggleState();
-
-    processorRef.requestSplice (stemsDir, 0.0, targetBPM, skip,
-                                (float) processorRef.getSpliceDensity());
 }
 
 void PluginEditor::loadSpliceOutputWaveform()
@@ -1061,4 +1136,17 @@ void PluginEditor::loadSpliceOutputWaveform()
     processorRef.loadSpliceOutput (stemsDir);
     splicePlayBtn.setToggleState (false, juce::dontSendNotification);
     spliceLoaded = true;
+}
+
+void PluginEditor::selectWaveform (int idx)
+{
+    selectedWaveformIdx_ = idx;
+
+    for (int t = 0; t < kNumTracks; ++t)
+        if (trackInputWaveforms[t])
+            trackInputWaveforms[t]->setSelected (t == idx);
+
+    spliceOutputWaveform.setSelected (idx == 4);
+
+    recButton.setButtonText (idx >= 0 ? "REC \xe2\x97\x8f" : "REC");
 }

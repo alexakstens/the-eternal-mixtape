@@ -97,7 +97,10 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 //==============================================================================
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    juce::ignoreUnused (samplesPerBlock);
+    recordSampleRate_ = (int) sampleRate;
+    recordBuffer_.setSize (2, kMaxRecordSeconds * recordSampleRate_, false, true, false);
+    recordWritePos_.store (0);
 }
 
 void PluginProcessor::releaseResources()
@@ -135,12 +138,30 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+    // Capture audio input into the recording buffer before any output mixing.
+    // Only runs if there is at least one physical input channel available.
+    if (isRecording_.load() && totalNumInputChannels > 0
+        && recordBuffer_.getNumSamples() > 0)
+    {
+        const int writePos = recordWritePos_.load();
+        const int avail    = recordBuffer_.getNumSamples() - writePos;
+        const int n        = juce::jmin (buffer.getNumSamples(), avail);
+        if (n > 0)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const int srcCh = juce::jmin (ch, totalNumInputChannels - 1);
+                recordBuffer_.copyFrom (ch, writePos, buffer, srcCh, 0, n);
+            }
+            recordWritePos_.fetch_add (n);
+        }
+        if (avail <= buffer.getNumSamples())
+            isRecording_.store (false); // buffer full — auto-stop
+    }
+
     // In case we have more outputs than inputs, this code clears any output
     // channels that didn't contain input data, (because these aren't
     // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
@@ -665,35 +686,34 @@ void PluginProcessor::prepareSimpleSpliceDir()
     stemOutputDirs_[activeTrack_.load()] = spliceDir;
 }
 
-void PluginProcessor::prepareDualTrackSpliceDir()
+int PluginProcessor::findNextLoadedTrack() const
 {
     const int t1 = activeTrack_.load();
-
-    // Find the next loaded track after the active one.
-    // Acquire the lock once for the full scan to avoid missing a loaded track
-    // if the audio thread briefly holds trackLock_ between TryLock attempts.
-    int t2 = -1;
+    const juce::SpinLock::ScopedLockType lk (trackLock_);
+    for (int i = 1; i < kNumTracks; ++i)
     {
-        const juce::SpinLock::ScopedLockType lk (trackLock_);
-        for (int i = 1; i < kNumTracks; ++i)
-        {
-            const int candidate = (t1 + i) % kNumTracks;
-            if (trackBuffers_[candidate].valid)
-            {
-                t2 = candidate;
-                break;
-            }
-        }
+        const int candidate = (t1 + i) % kNumTracks;
+        if (trackBuffers_[candidate].valid)
+            return candidate;
     }
+    return -1;
+}
 
-    // Only one track loaded — fall back to single-track
+// ── AUTO SPLICE morph transition ──────────────────────────────────────────────
+// Output layout:  [Track A body] [beat-alternating transition] [Track B body]
+// SpliceThread runs with density=0: no shuffle, only BPM normalisation.
+// The alternating A/B beats in the transition zone ARE the splice effect.
+void PluginProcessor::prepareMorphTransitionDir()
+{
+    const int t1 = activeTrack_.load();
+    const int t2 = findNextLoadedTrack();
+
     if (t2 < 0)
     {
         prepareSimpleSpliceDir();
         return;
     }
 
-    // Copy both buffers quickly under lock
     juce::AudioBuffer<float> bufA, bufB;
     int sr = 44100;
     {
@@ -704,38 +724,58 @@ void PluginProcessor::prepareDualTrackSpliceDir()
         sr   = trackBuffers_[t1].sampleRate;
     }
 
-    // Interleave at 2-bar (8-beat) boundaries so each track gets a full musical phrase.
-    // Each chunk: A0, B0, A1, B1, A2, B2, ...  Both tracks loop if lengths differ.
-    const int chunkLen = std::max (512, (int) (sr * 60.0 / globalBPM_ * 8));
-    const int nChunks  = 2 * (std::max (bufA.getNumSamples(), bufB.getNumSamples())
-                               / chunkLen + 2);
+    // Transition: 16 beats of alternating A_end / B_start (beat-by-beat)
+    const int beatLen        = std::max (512, (int) (sr * 60.0 / globalBPM_));
+    const int nTransBeats    = 16;
+    const int transLen       = beatLen * nTransBeats;
 
-    juce::AudioBuffer<float> interleaved (2, nChunks * chunkLen);
-    interleaved.clear();
+    const int aSamples  = bufA.getNumSamples();
+    const int bSamples  = bufB.getNumSamples();
+    const int aBodyLen  = std::max (0, aSamples - transLen);
+    const int bBodyStart = std::min (transLen, bSamples);
+    const int bBodyLen  = bSamples - bBodyStart;
 
-    for (int chunk = 0; chunk < nChunks; ++chunk)
+    // Usable transition beats: limited by whichever track is shorter at the boundary
+    const int aTailLen  = aSamples - aBodyLen;
+    const int bHeadLen  = bBodyStart;
+    const int nUsable   = std::min (aTailLen, bHeadLen) / beatLen;
+
+    const int totalLen = aBodyLen + nUsable * 2 * beatLen + bBodyLen;
+    if (totalLen <= 0) { prepareSimpleSpliceDir(); return; }
+
+    juce::AudioBuffer<float> assembled (2, totalLen);
+    assembled.clear();
+
+    auto copyRange = [&] (juce::AudioBuffer<float>& dst, int dstStart,
+                          const juce::AudioBuffer<float>& src, int srcStart, int len)
     {
-        const bool useA    = (chunk % 2 == 0);
-        const auto& src    = useA ? bufA : bufB;
-        const int   srcN   = src.getNumSamples();
-        if (srcN <= 0) continue;
-
-        const int srcStart   = ((chunk / 2) * chunkLen) % srcN;
-        const int writeStart = chunk * chunkLen;
-
+        const int safeSrc = std::min (srcStart, src.getNumSamples());
+        const int safeLen = std::min (len, src.getNumSamples() - safeSrc);
+        if (safeLen <= 0) return;
         for (int ch = 0; ch < 2; ++ch)
         {
-            const int srcCh = (ch < src.getNumChannels()) ? ch : 0;
-            for (int i = 0; i < chunkLen; ++i)
-            {
-                const int srcPos = (srcStart + i) % srcN;
-                interleaved.setSample (ch, writeStart + i,
-                                       src.getSample (srcCh, srcPos));
-            }
+            const int sc = (ch < src.getNumChannels()) ? ch : 0;
+            dst.copyFrom (ch, dstStart, src, sc, safeSrc, safeLen);
         }
+    };
+
+    // 1. Track A body (unchanged)
+    copyRange (assembled, 0, bufA, 0, aBodyLen);
+
+    // 2. Transition: per-beat alternation [A_end beat, B_start beat, A_end beat, B_start beat, ...]
+    int writePos = aBodyLen;
+    for (int b = 0; b < nUsable; ++b)
+    {
+        copyRange (assembled, writePos, bufA, aBodyLen + b * beatLen, beatLen);
+        writePos += beatLen;
+        copyRange (assembled, writePos, bufB, b * beatLen, beatLen);
+        writePos += beatLen;
     }
 
-    // Write to simple_splice/drums.wav for SpliceThread to pick up
+    // 3. Track B body (unchanged)
+    copyRange (assembled, writePos, bufB, bBodyStart, bBodyLen);
+
+    // Write assembled buffer as drums.wav in the splice dir
     auto spliceDir = getConfigPath ("export_output_dir").getChildFile ("simple_splice");
     spliceDir.createDirectory();
 
@@ -746,8 +786,73 @@ void PluginProcessor::prepareDualTrackSpliceDir()
     {
         if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (
                 wavFmt.createWriterFor (stream.release(), sr, 2, 16, {}, 0)))
-            writer->writeFromAudioSampleBuffer (interleaved, 0,
-                                                interleaved.getNumSamples());
+            writer->writeFromAudioSampleBuffer (assembled, 0, assembled.getNumSamples());
+    }
+
+    stemOutputDirs_[activeTrack_.load()] = spliceDir;
+}
+
+// ── REGENERATE / RANDOMIZE full interleave ────────────────────────────────────
+// Both tracks interleaved at 2-bar boundaries over their full length.
+// SpliceThread shuffles with density=1.0 (full random beat order).
+void PluginProcessor::prepareFullInterleaveSpliceDir()
+{
+    const int t1 = activeTrack_.load();
+    const int t2 = findNextLoadedTrack();
+
+    if (t2 < 0)
+    {
+        prepareSimpleSpliceDir();
+        return;
+    }
+
+    juce::AudioBuffer<float> bufA, bufB;
+    int sr = 44100;
+    {
+        const juce::SpinLock::ScopedLockType lock (trackLock_);
+        if (! trackBuffers_[t1].valid || ! trackBuffers_[t2].valid) return;
+        bufA = trackBuffers_[t1].audio;
+        bufB = trackBuffers_[t2].audio;
+        sr   = trackBuffers_[t1].sampleRate;
+    }
+
+    // 2-bar (8-beat) chunks: A0, B0, A1, B1, ... looping over full length of both tracks
+    const int chunkLen = std::max (512, (int) (sr * 60.0 / globalBPM_ * 8));
+    const int nChunks  = 2 * (std::max (bufA.getNumSamples(), bufB.getNumSamples())
+                               / chunkLen + 2);
+
+    juce::AudioBuffer<float> interleaved (2, nChunks * chunkLen);
+    interleaved.clear();
+
+    for (int chunk = 0; chunk < nChunks; ++chunk)
+    {
+        const bool            useA    = (chunk % 2 == 0);
+        const auto&           src     = useA ? bufA : bufB;
+        const int             srcN    = src.getNumSamples();
+        if (srcN <= 0) continue;
+        const int srcStart   = ((chunk / 2) * chunkLen) % srcN;
+        const int writeStart = chunk * chunkLen;
+
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const int srcCh = (ch < src.getNumChannels()) ? ch : 0;
+            for (int i = 0; i < chunkLen; ++i)
+                interleaved.setSample (ch, writeStart + i,
+                                       src.getSample (srcCh, (srcStart + i) % srcN));
+        }
+    }
+
+    auto spliceDir = getConfigPath ("export_output_dir").getChildFile ("simple_splice");
+    spliceDir.createDirectory();
+
+    juce::WavAudioFormat wavFmt;
+    auto outFile = spliceDir.getChildFile ("drums.wav");
+    outFile.deleteFile();
+    if (auto stream = outFile.createOutputStream())
+    {
+        if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (
+                wavFmt.createWriterFor (stream.release(), sr, 2, 16, {}, 0)))
+            writer->writeFromAudioSampleBuffer (interleaved, 0, interleaved.getNumSamples());
     }
 
     stemOutputDirs_[activeTrack_.load()] = spliceDir;
@@ -755,58 +860,170 @@ void PluginProcessor::prepareDualTrackSpliceDir()
 
 void PluginProcessor::applyAutoSpliceDualTrack()
 {
-    // Always rebuild the interleaved file so newly dropped tracks are picked up.
-    prepareDualTrackSpliceDir();
+    // Morph transition: A → splice zone → B, density=0 (no shuffle).
+    prepareMorphTransitionDir();
     auto dir = stemOutputDirs_[activeTrack_.load()];
     if (dir == juce::File{}) return;
-    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, false, 42);
+    requestSplice (dir, 0.0, globalBPM_, false, 0.0f, false, 42);
 }
 
 void PluginProcessor::applyAutoSplice()
 {
-    // Expert-mode path: uses the active track's registered stems.
-    // If no stems, fall back to simple single-track mode.
-    // Reproducible: fixed seed 42.
+    // Expert mode: uses registered Demucs stems; morph-style, reproducible seed 42.
     const int t = activeTrack_.load();
     if (stemOutputDirs_[t] == juce::File{})
         prepareSimpleSpliceDir();
     auto dir = stemOutputDirs_[t];
     if (dir == juce::File{}) return;
-    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, false, 42);
+    requestSplice (dir, 0.0, globalBPM_, false, 0.0f, false, 42);
 }
 
 void PluginProcessor::regenerateMix()
 {
-    // New shuffle each press (random seed), uniform BPM — roll the dice again.
-    const int t = activeTrack_.load();
-    if (stemOutputDirs_[t] == juce::File{})
-        prepareSimpleSpliceDir();
-    auto dir = stemOutputDirs_[t];
+    // Full two-track beat shuffle, uniform BPM, new random seed every press.
+    prepareFullInterleaveSpliceDir();
+    auto dir = stemOutputDirs_[activeTrack_.load()];
     if (dir == juce::File{}) return;
     const auto seed = (unsigned int) juce::Time::getMillisecondCounterHiRes();
-    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, false, seed);
+    requestSplice (dir, 0.0, globalBPM_, false, 1.0f, false, seed);
 }
 
 void PluginProcessor::randomizeMix()
 {
-    // Per-beat tempo variation (0.5×–1.8× target) + new shuffle.
-    const int t = activeTrack_.load();
-    if (stemOutputDirs_[t] == juce::File{})
-        prepareSimpleSpliceDir();
-    auto dir = stemOutputDirs_[t];
+    // Full two-track beat shuffle + per-beat tempo wander, new seed every press.
+    prepareFullInterleaveSpliceDir();
+    auto dir = stemOutputDirs_[activeTrack_.load()];
     if (dir == juce::File{}) return;
     const auto seed = (unsigned int) juce::Time::getMillisecondCounterHiRes();
-    requestSplice (dir, 0.0, globalBPM_, false, spliceDensity_, true, seed);
+    requestSplice (dir, 0.0, globalBPM_, false, 1.0f, true, seed);
 }
 
-void PluginProcessor::startRecording()
+bool PluginProcessor::startRecordingToTrack (int trackIdx)
 {
-    startRecording (getConfigPath ("export_output_dir").getChildFile ("recording.wav"));
+    if (trackIdx < 0 || trackIdx >= kNumTracks) return false;
+    if (recordBuffer_.getNumSamples() == 0)     return false;
+    if (getTotalNumInputChannels() <= 0)         return false;
+
+    recordingTrack_.store (trackIdx);
+    recordWritePos_.store (0);
+    recordBuffer_.clear();
+    isRecording_.store (true);
+    return true;
 }
 
-void PluginProcessor::startRecording (const juce::File& outputFile)
+juce::File PluginProcessor::stopRecordingAndSave()
 {
-    juce::ignoreUnused (outputFile);
+    isRecording_.store (false);
+    const int trackIdx = recordingTrack_.exchange (-1);
+    const int n        = recordWritePos_.exchange (0);
+
+    if (trackIdx < 0 || trackIdx >= kNumTracks || n <= 0)
+        return juce::File{};
+
+    juce::AudioBuffer<float> captured (2, n);
+    for (int ch = 0; ch < 2; ++ch)
+        captured.copyFrom (ch, 0, recordBuffer_, ch, 0, n);
+
+    {
+        const juce::SpinLock::ScopedLockType lk (trackLock_);
+        trackBuffers_[trackIdx].audio        = captured;
+        trackBuffers_[trackIdx].sampleRate   = recordSampleRate_;
+        trackBuffers_[trackIdx].totalSamples = n;
+        trackBuffers_[trackIdx].valid        = true;
+        trackOriginalBuffers_[trackIdx]      = trackBuffers_[trackIdx];
+        if (trackIdx == activeTrack_.load())
+            trackPlayPos_.store (0);
+    }
+
+    const auto outDir = getConfigPath ("export_output_dir");
+    outDir.createDirectory();
+    auto tempFile = outDir.getChildFile ("recorded_track_"
+                                        + juce::String::charToString ("ABCD"[trackIdx])
+                                        + ".wav");
+    tempFile.deleteFile();
+    juce::WavAudioFormat fmt;
+    if (auto stream = tempFile.createOutputStream())
+    {
+        if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (
+                fmt.createWriterFor (stream.release(),
+                                     static_cast<double> (recordSampleRate_), 2u, 24, {}, 0)))
+            writer->writeFromAudioSampleBuffer (captured, 0, n);
+    }
+    return tempFile;
+}
+
+void PluginProcessor::exportTrackToFile (int trackIdx, const juce::File& outputFile)
+{
+    if (trackIdx < 0 || trackIdx >= kNumTracks) return;
+
+    juce::AudioBuffer<float> buf;
+    double sampleRate = 44100.0;
+    {
+        const juce::SpinLock::ScopedLockType lk (trackLock_);
+        if (! trackBuffers_[trackIdx].valid) return;
+        buf        = trackBuffers_[trackIdx].audio;
+        sampleRate = (trackBuffers_[trackIdx].sampleRate > 0)
+                         ? static_cast<double> (trackBuffers_[trackIdx].sampleRate)
+                         : 44100.0;
+    }
+
+    juce::WavAudioFormat fmt;
+    outputFile.deleteFile();
+    if (auto stream = outputFile.createOutputStream())
+    {
+        if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (
+                fmt.createWriterFor (stream.release(), sampleRate,
+                                     static_cast<unsigned int> (buf.getNumChannels()), 24, {}, 0)))
+        {
+            writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+        }
+    }
+}
+
+void PluginProcessor::exportSpliceOutputToFile (const juce::File& outputFile)
+{
+    auto mixedFile = spliceThread.getMixedOutputFile();
+    if (mixedFile.existsAsFile())
+    {
+        mixedFile.copyFileTo (outputFile);
+        return;
+    }
+
+    // Fall back: mix spliceStems_ buffers together
+    int totalSamples  = 0;
+    {
+        const juce::SpinLock::ScopedTryLockType lk (spliceLock_);
+        if (! lk.isLocked()) return;
+        for (int i = 0; i < kNumTracks; ++i)
+            totalSamples = juce::jmax (totalSamples, spliceStems_[i].audio.getNumSamples());
+        if (totalSamples == 0) return;
+
+        const double sampleRate = (getSampleRate() > 0.0) ? getSampleRate() : 44100.0;
+        juce::AudioBuffer<float> mixed (2, totalSamples);
+        mixed.clear();
+        for (int i = 0; i < kNumTracks; ++i)
+        {
+            const auto& src = spliceStems_[i].audio;
+            const int   n   = src.getNumSamples();
+            if (n == 0) continue;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const int srcCh = (ch < src.getNumChannels()) ? ch : 0;
+                mixed.addFrom (ch, 0, src, srcCh, 0, n);
+            }
+        }
+
+        juce::WavAudioFormat fmt;
+        outputFile.deleteFile();
+        if (auto stream = outputFile.createOutputStream())
+        {
+            if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (
+                    fmt.createWriterFor (stream.release(), sampleRate, 2u, 24, {}, 0)))
+            {
+                writer->writeFromAudioSampleBuffer (mixed, 0, mixed.getNumSamples());
+            }
+        }
+    }
 }
 
 //==============================================================================

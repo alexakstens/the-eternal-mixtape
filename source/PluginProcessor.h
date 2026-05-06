@@ -114,8 +114,15 @@ public:
     void applyAutoSplice();
     void regenerateMix();
     void randomizeMix();
-    void startRecording();
-    void startRecording (const juce::File& outputFile);
+
+    // Export (used by REC when exporting splice/track to file)
+    void exportTrackToFile (int trackIdx, const juce::File& outputFile);
+    void exportSpliceOutputToFile (const juce::File& outputFile);
+
+    // Audio-input recording — replaces the selected track with captured audio
+    bool       startRecordingToTrack (int trackIdx); // returns false if no input channels available
+    juce::File stopRecordingAndSave();
+    bool       isRecording() const { return isRecording_.load(); }
 
     //==============================================================================
     // UX contract: Stem separation (progress/error for UI)
@@ -155,16 +162,23 @@ public:
     juce::File getLastStemOutputDir() const;
 
     // Simple-mode: write the active track to a temp dir so SpliceThread can chop it
-    // without requiring Demucs stem separation. Sets lastStemOutputDir_ on success.
+    // without requiring Demucs stem separation. Sets stemOutputDirs_[activeTrack_] on success.
     void prepareSimpleSpliceDir();
 
-    // True mixtape splice: interleaves the active track with the next loaded track
-    // at 2-bar (8-beat) boundaries, then hands the combined audio to SpliceThread.
-    // Falls back to single-track if only one track is loaded.
-    void prepareDualTrackSpliceDir();
+    // AUTO SPLICE morph mode: A_body + beat-alternating transition zone + B_body.
+    // SpliceThread runs with density=0 (no shuffle) — only BPM-normalises.
+    // The alternating transition region IS the splice effect.
+    void prepareMorphTransitionDir();
 
-    // AUTO SPLICE for simple mode — always rebuilds dual-track interleave fresh
-    // so it picks up newly dropped files automatically.
+    // REGENERATE/RANDOMIZE mode: full interleave of both tracks over entire length.
+    // Passes the combined audio to SpliceThread with density=1.0 for a full shuffle.
+    // Falls back to single-track if only one track is loaded.
+    void prepareFullInterleaveSpliceDir();
+
+    // Returns the index of the next loaded track after activeTrack_, or -1 if none.
+    int findNextLoadedTrack() const;
+
+    // AUTO SPLICE for simple mode — morph transition between active track and next.
     void applyAutoSpliceDualTrack();
 
     //==============================================================================
@@ -241,6 +255,14 @@ private:
     // Performs a TimeStretcher pass on trackOriginalBuffers_[activeTrack_] at globalBPM_.
     // Heavy work runs outside the spinlock; only the buffer swap takes the lock.
     void restretchActiveTrack();
+
+    // Audio-input recording state (written on audio thread, read on UI thread)
+    static constexpr int     kMaxRecordSeconds = 300;
+    juce::AudioBuffer<float> recordBuffer_;
+    std::atomic<bool>        isRecording_     { false };
+    std::atomic<int>         recordingTrack_  { -1 };
+    std::atomic<int>         recordWritePos_  { 0 };
+    int                      recordSampleRate_ = 44100;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

@@ -47,6 +47,22 @@ public:
         repaint();
     }
 
+    void setSelected (bool selected)
+    {
+        if (isSelected_ == selected) return;
+        isSelected_ = selected;
+        repaint();
+    }
+
+    bool isSelected() const { return isSelected_; }
+
+    std::function<void()> onClick;
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        if (onClick) onClick();
+    }
+
     void paint (juce::Graphics& g) override
     {
         auto bounds = getLocalBounds();
@@ -54,14 +70,22 @@ public:
         g.setColour (juce::Colour (0xff1a1a2e));
         g.fillRoundedRectangle (bounds.toFloat(), 4.0f);
 
-        g.setColour (juce::Colour (0xff3a3a5e));
-        g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 4.0f, 1.0f);
+        if (isSelected_)
+        {
+            g.setColour (juce::Colour (0xffff6b35));
+            g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 4.0f, 2.0f);
+        }
+        else
+        {
+            g.setColour (juce::Colour (0xff3a3a5e));
+            g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 4.0f, 1.0f);
+        }
 
         auto drawArea = bounds.reduced (4);
 
         if (label.isNotEmpty())
         {
-            g.setColour (juce::Colours::lightgrey);
+            g.setColour (isSelected_ ? juce::Colour (0xffff6b35) : juce::Colours::lightgrey);
             g.setFont (11.0f);
             g.drawText (label, drawArea.removeFromTop (14),
                         juce::Justification::centredLeft);
@@ -79,6 +103,12 @@ public:
             g.setFont (11.0f);
             g.drawText (placeholderText, drawArea, juce::Justification::centred);
         }
+
+        if (isSelected_)
+        {
+            g.setColour (juce::Colour (0x22ff6b35));
+            g.fillRoundedRectangle (bounds.toFloat(), 4.0f);
+        }
     }
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override
@@ -90,6 +120,7 @@ private:
     juce::String label;
     juce::String placeholderText;
     juce::Colour waveColour { 0xff4fc3f7 };
+    bool isSelected_ = false;
     juce::AudioThumbnailCache thumbnailCache;
     juce::AudioThumbnail thumbnail;
 
