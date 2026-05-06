@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "TimeStretcher.h"
 
 //==============================================================================
 PluginProcessor::PluginProcessor()
@@ -13,9 +14,13 @@ PluginProcessor::PluginProcessor()
                        )
 {
     initDefaultConfigPaths();
-    spliceFormatManager_.registerBasicFormats(); // used in loadSpliceOutput
+    spliceFormatManager_.registerBasicFormats();
+    trackFormatManager_.registerBasicFormats();
     for (int i = 0; i < kNumTracks; ++i)
-        trackState_[i].name = "Track " + juce::String (char ('A' + i));
+    {
+        trackState_[i].name  = "Track " + juce::String (char ('A' + i));
+        trackSourceBPM_[i]   = 120.0f;
+    }
 }
 
 PluginProcessor::~PluginProcessor()
@@ -152,6 +157,47 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // ..do something to the data...
     }
 
+    // Mix in the ACTIVE track's source-file playback (driven by the main play button)
+    if (isPlaying_.load())
+    {
+        const juce::SpinLock::ScopedTryLockType tryLock (trackLock_);
+        if (tryLock.isLocked())
+        {
+            const int ti = activeTrack_.load();
+            if (juce::isPositiveAndBelow (ti, kNumTracks) && trackBuffers_[ti].valid)
+            {
+                const int     numOut  = buffer.getNumSamples();
+                const int64_t pos     = trackPlayPos_.load();
+                const int64_t trackLen = trackBuffers_[ti].totalSamples;
+                const float   gain    = getTrackGain (ti);
+
+                for (int c = 0; c < std::min (2, buffer.getNumChannels()); ++c)
+                {
+                    auto* out = buffer.getWritePointer (c);
+                    for (int n = 0; n < numOut; ++n)
+                    {
+                        const int64_t spos = pos + n;
+                        if (spos < trackLen)
+                            out[n] += gain * trackBuffers_[ti].audio.getSample (c, (int) spos);
+                    }
+                }
+
+                int64_t newPos = pos + numOut;
+                if (newPos >= trackLen)
+                {
+                    if (loopEnabled_)
+                        newPos = newPos % trackLen;
+                    else
+                    {
+                        newPos = trackLen;
+                        isPlaying_.store (false);
+                    }
+                }
+                trackPlayPos_.store (newPos);
+            }
+        }
+    }
+
     // Mix in splice output playback (per-stem with track gains)
     if (spliceIsPlaying_.load())
     {
@@ -267,32 +313,49 @@ void PluginProcessor::setConfigPath (const juce::String& key, const juce::File& 
 //==============================================================================
 void PluginProcessor::play()
 {
-    isPlaying_ = true;
+    isPlaying_.store (true);
 }
 
 void PluginProcessor::stop()
 {
-    isPlaying_ = false;
+    isPlaying_.store (false);
+    trackPlayPos_.store (0);
 }
 
 bool PluginProcessor::isTransportPlaying() const
 {
-    return isPlaying_;
+    return isPlaying_.load();
 }
 
 void PluginProcessor::setTransportPosition (double ratio)
 {
-    transportPosition_ = juce::jlimit (0.0, 1.0, ratio);
+    ratio = juce::jlimit (0.0, 1.0, ratio);
+    transportPosition_ = ratio;
+    // Also seek the track playback position
+    const double len = getTransportTotalLengthSeconds();
+    if (len > 0.0)
+    {
+        int sr = 44100;
+        for (int i = 0; i < kNumTracks; ++i)
+            if (trackBuffers_[i].valid) { sr = trackBuffers_[i].sampleRate; break; }
+        trackPlayPos_.store ((int64_t) (ratio * len * sr));
+    }
 }
 
 double PluginProcessor::getTransportPositionSeconds() const
 {
-    return transportLengthSeconds_ * transportPosition_;
+    int sr = 44100;
+    for (int i = 0; i < kNumTracks; ++i)
+        if (trackBuffers_[i].valid) { sr = trackBuffers_[i].sampleRate; break; }
+    return (double) trackPlayPos_.load() / (double) sr;
 }
 
 double PluginProcessor::getTransportTotalLengthSeconds() const
 {
-    return transportLengthSeconds_;
+    const int ti = activeTrack_.load();
+    if (juce::isPositiveAndBelow (ti, kNumTracks) && trackBuffers_[ti].valid)
+        return (double) trackBuffers_[ti].totalSamples / (double) trackBuffers_[ti].sampleRate;
+    return transportLengthSeconds_; // fallback to stub value
 }
 
 void PluginProcessor::setLoopEnabled (bool enabled)
@@ -363,6 +426,131 @@ void PluginProcessor::setTrackStemFile (int trackIndex, int stemSlot, const juce
 void PluginProcessor::setTrackStemIndices (int trackIndex, int stem1Index, int stem2Index)
 {
     juce::ignoreUnused (trackIndex, stem1Index, stem2Index);
+}
+
+void PluginProcessor::loadTrackFile (int trackIndex, const juce::File& file)
+{
+    if (! juce::isPositiveAndBelow (trackIndex, kNumTracks)) return;
+    if (! file.existsAsFile()) return;
+
+    std::unique_ptr<juce::AudioFormatReader> reader (trackFormatManager_.createReaderFor (file));
+    if (! reader) return;
+
+    const int numSamples = (int) reader->lengthInSamples;
+    const int numCh      = std::min (2, (int) reader->numChannels);
+    const int sr         = (int) reader->sampleRate;
+
+    juce::AudioBuffer<float> buf (2, numSamples);
+    reader->read (&buf, 0, numSamples, 0, true, numCh > 1);
+    if (numCh == 1)
+        buf.copyFrom (1, 0, buf, 0, 0, numSamples);
+
+    {
+        const juce::SpinLock::ScopedLockType sl (trackLock_);
+        // Store both the original (for future BPM re-stretching) and the play buffer
+        trackOriginalBuffers_[trackIndex].audio        = buf; // copy
+        trackOriginalBuffers_[trackIndex].sampleRate   = sr;
+        trackOriginalBuffers_[trackIndex].totalSamples = numSamples;
+        trackOriginalBuffers_[trackIndex].valid        = true;
+        trackSourceBPM_[trackIndex]                    = 120.0f; // default; override after analysis
+
+        trackBuffers_[trackIndex].audio        = std::move (buf);
+        trackBuffers_[trackIndex].sampleRate   = sr;
+        trackBuffers_[trackIndex].totalSamples = numSamples;
+        trackBuffers_[trackIndex].valid        = true;
+    }
+
+    setTrackSource (trackIndex, file);
+    activeTrack_.store (trackIndex); // loading a track makes it the active one
+    trackPlayPos_.store (0);
+}
+
+//==============================================================================
+// Active track navigation
+//==============================================================================
+int PluginProcessor::getActiveTrack() const noexcept
+{
+    return activeTrack_.load();
+}
+
+void PluginProcessor::setActiveTrack (int trackIndex)
+{
+    if (juce::isPositiveAndBelow (trackIndex, kNumTracks))
+        activeTrack_.store (trackIndex);
+    trackPlayPos_.store (0);
+}
+
+bool PluginProcessor::isActiveTrackLoaded() const noexcept
+{
+    const int t = activeTrack_.load();
+    return juce::isPositiveAndBelow (t, kNumTracks) && trackBuffers_[t].valid;
+}
+
+//==============================================================================
+// BPM re-stretch
+//==============================================================================
+void PluginProcessor::triggerBpmRestretch()
+{
+    // Run the heavy FFT work on a fire-and-forget background thread so the
+    // message thread (BPM slider, UI timer) stays responsive.
+    juce::Thread::launch ([this] { restretchActiveTrack(); });
+}
+
+void PluginProcessor::restretchActiveTrack()
+{
+    const int t = activeTrack_.load();
+    if (! juce::isPositiveAndBelow (t, kNumTracks)) return;
+
+    // Copy original data (brief lock — just memcpy, not the FFT work)
+    juce::AudioBuffer<float> originalCopy;
+    int sr = 44100;
+    float sourceBPM = 120.0f;
+    {
+        const juce::SpinLock::ScopedLockType sl (trackLock_);
+        if (! trackOriginalBuffers_[t].valid) return;
+        originalCopy = trackOriginalBuffers_[t].audio;
+        sr           = trackOriginalBuffers_[t].sampleRate;
+        sourceBPM    = trackSourceBPM_[t];
+    }
+
+    const float targetBPM     = (float) globalBPM_;
+    const float stretchFactor = sourceBPM / targetBPM; // < 1 = faster, > 1 = slower
+
+    if (stretchFactor < 0.25f || stretchFactor > 4.0f) return; // out of usable range
+
+    // Convert AudioBuffer → vector<vector<float>>
+    const int numSamples = originalCopy.getNumSamples();
+    const int numCh      = std::min (2, originalCopy.getNumChannels());
+    std::vector<std::vector<float>> input ((size_t) numCh, std::vector<float> ((size_t) numSamples));
+    for (int c = 0; c < numCh; ++c)
+        std::copy (originalCopy.getReadPointer (c),
+                   originalCopy.getReadPointer (c) + numSamples,
+                   input[(size_t) c].begin());
+
+    // Run the HPSS phase-vocoder time-stretch (no pitch change)
+    auto params = remixing::TimeStretcher::makeParams (stretchFactor, (float) sr);
+    auto result = remixing::TimeStretcher::process (input, params);
+
+    if (result.empty() || result[0].empty()) return;
+
+    const int outSamples = (int) result[0].size();
+    juce::AudioBuffer<float> stretched (2, outSamples);
+    for (int c = 0; c < 2; ++c)
+    {
+        const int srcCh = juce::jmin (c, (int) result.size() - 1);
+        std::copy (result[(size_t) srcCh].begin(), result[(size_t) srcCh].end(),
+                   stretched.getWritePointer (c));
+    }
+
+    // Swap in the new buffer under lock — reset play position to avoid reading past end
+    {
+        const juce::SpinLock::ScopedLockType sl (trackLock_);
+        trackBuffers_[t].audio        = std::move (stretched);
+        trackBuffers_[t].totalSamples = outSamples;
+        trackBuffers_[t].sampleRate   = sr;
+        trackBuffers_[t].valid        = true;
+        trackPlayPos_.store (0);
+    }
 }
 
 //==============================================================================

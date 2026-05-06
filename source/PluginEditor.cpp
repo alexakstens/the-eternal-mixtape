@@ -188,7 +188,10 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                                    juce::MathConstants<float>::pi * 2.8f, true);
     bpmSlider.setRange (20.0, 300.0, 1.0);
     bpmSlider.setValue (processorRef.getGlobalBPM());
-    bpmSlider.onValueChange = [this] { processorRef.setGlobalBPM (bpmSlider.getValue()); };
+    bpmSlider.onValueChange = [this] {
+        processorRef.setGlobalBPM (bpmSlider.getValue());
+        bpmChangeDebounceCounter_ = 5; // 5 × 100ms timer ticks = 500ms settle time
+    };
     addAndMakeVisible (bpmSlider);
     densitySlider.setSliderStyle (juce::Slider::LinearHorizontal);
     densitySlider.setTextBoxStyle (juce::Slider::TextBoxRight, true, 50, 20);
@@ -285,9 +288,19 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                     BinaryData::Back_hover_svg, BinaryData::Back_hover_svgSize,
                     BinaryData::Back_on_svg,    BinaryData::Back_on_svgSize);
     mainRewindBtn.onClick = [this] {
+        const int prev = (processorRef.getActiveTrack() + kNumTracks - 1) % kNumTracks;
+        processorRef.setActiveTrack (prev);
         processorRef.stop();
         processorRef.setTransportPosition (0.0);
-        mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+        if (processorRef.isActiveTrackLoaded())
+        {
+            processorRef.play();
+            mainPlayBtn.setToggleState (true, juce::dontSendNotification);
+        }
+        else
+        {
+            mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+        }
     };
     addAndMakeVisible (mainRewindBtn);
 
@@ -332,8 +345,19 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                     BinaryData::Forward_hover_svg, BinaryData::Forward_hover_svgSize,
                     BinaryData::Forward_on_svg,    BinaryData::Forward_on_svgSize);
     mainForwardBtn.onClick = [this] {
-        if (processorRef.getTransportTotalLengthSeconds() > 0.0)
-            processorRef.setTransportPosition (1.0);
+        const int next = (processorRef.getActiveTrack() + 1) % kNumTracks;
+        processorRef.setActiveTrack (next);
+        processorRef.stop();
+        processorRef.setTransportPosition (0.0);
+        if (processorRef.isActiveTrackLoaded())
+        {
+            processorRef.play();
+            mainPlayBtn.setToggleState (true, juce::dontSendNotification);
+        }
+        else
+        {
+            mainPlayBtn.setToggleState (false, juce::dontSendNotification);
+        }
     };
     addAndMakeVisible (mainForwardBtn);
 
@@ -543,6 +567,13 @@ void PluginEditor::timerCallback()
 
     if (sThread.getStatus() == SpliceThread::Status::Complete && ! spliceLoaded)
         loadSpliceOutputWaveform();
+
+    // BPM debounce: after the slider settles for ~500ms, trigger a background re-stretch
+    if (bpmChangeDebounceCounter_ > 0)
+    {
+        if (--bpmChangeDebounceCounter_ == 0)
+            processorRef.triggerBpmRestretch();
+    }
 
     // Sync play button toggle with actual transport state
     bool isPlaying = processorRef.isSpliceOutputPlaying();
@@ -790,20 +821,52 @@ bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files)
     return false;
 }
 
-void PluginEditor::filesDropped (const juce::StringArray& files, int, int)
+void PluginEditor::filesDropped (const juce::StringArray& files, int x, int)
 {
+    // Determine which track column (A=0..D=3) the drop landed in.
+    // Mirrors the constants in resized() so we don't need runtime bounds queries.
+    constexpr int kGutterW        = 120;
+    constexpr int kTrackBankPinch = 48;
+    constexpr int kTrack0X        = kGutterW + kTrackBankPinch;              // 168
+    constexpr int kTrackBankW     = (1024 - kGutterW) - 2 * kTrackBankPinch; // 808
+    constexpr int kColW           = kTrackBankW / kNumTracks;                 // 202
+
+    int trackIdx = -1;
+    if (x >= kTrack0X && x < kTrack0X + kTrackBankW)
+        trackIdx = (x - kTrack0X) / kColW; // 0..3
+
     for (auto& f : files)
     {
         auto ext = juce::File (f).getFileExtension().toLowerCase();
-        if (ext == ".wav" || ext == ".mp3" || ext == ".aiff" || ext == ".flac")
+        if (ext != ".wav" && ext != ".mp3" && ext != ".aiff" && ext != ".flac")
+            continue;
+
+        auto file = juce::File (f);
+
+        if (juce::isPositiveAndBelow (trackIdx, kNumTracks))
         {
+            // Load file into the target track: waveform display + processor buffer
+            if (trackInputWaveforms[trackIdx])
+                trackInputWaveforms[trackIdx]->loadFile (file);
+            processorRef.loadTrackFile (trackIdx, file);
+            // Also populate stem-separation input if track A is loaded (convenience)
+            if (trackIdx == 0)
+            {
+                stemInputEditor.setText (f);
+                auto outputDir = file.getParentDirectory()
+                    .getChildFile (file.getFileNameWithoutExtension() + "_stems");
+                stemOutputEditor.setText (outputDir.getFullPathName());
+            }
+        }
+        else
+        {
+            // Dropped outside any track column — fall back to stem-separation input
             stemInputEditor.setText (f);
-            auto file = juce::File (f);
             auto outputDir = file.getParentDirectory()
                 .getChildFile (file.getFileNameWithoutExtension() + "_stems");
             stemOutputEditor.setText (outputDir.getFullPathName());
-            break;
         }
+        break; // handle one file per drop
     }
 }
 

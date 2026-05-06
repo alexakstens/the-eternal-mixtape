@@ -126,5 +126,8 @@ private:
     std::unique_ptr<juce::LookAndFeel> bpmSliderLookAndFeel_;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
+    // BPM debounce: counts down at 10 Hz; triggers re-stretch when it reaches 0
+    int bpmChangeDebounceCounter_ = 0;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

@@ -77,6 +77,19 @@ public:
     void setTrackStemFile (int trackIndex, int stemSlot, const juce::File& file);
     void setTrackStemIndices (int trackIndex, int stem1Index, int stem2Index);
 
+    // Load a file into a track's in-memory buffer for playback via mainPlayBtn.
+    // Safe to call from the message thread; the buffer is ready before returning.
+    void loadTrackFile (int trackIndex, const juce::File& file);
+
+    // Active track navigation (0 = A … 3 = D)
+    int  getActiveTrack() const noexcept;
+    void setActiveTrack (int trackIndex);
+    bool isActiveTrackLoaded() const noexcept;
+
+    // Trigger a background BPM re-stretch of the active track using TimeStretcher.
+    // Call this after the BPM slider has settled (debounced from the editor).
+    void triggerBpmRestretch();
+
     //==============================================================================
     // UX contract: Mix
     //==============================================================================
@@ -150,7 +163,7 @@ private:
     std::map<juce::String, juce::File> configPaths_;
     double transportPosition_ = 0.0;
     double transportLengthSeconds_ = 0.0;
-    bool isPlaying_ = false;
+    std::atomic<bool> isPlaying_ { false };
     bool loopEnabled_ = false;
     double loopStartSec_ = 0.0, loopEndSec_ = 0.0;
     float masterLevel_ = 0.0f;
@@ -182,6 +195,27 @@ private:
     std::atomic<bool>        spliceIsLooping_ { false };
     int64_t                  spliceTotalSamples_ = 0;
     int                      spliceSampleRate_   = 44100;
+
+    // Per-track source-file playback — in-memory, same pattern as splice.
+    // Loaded on the message thread via loadTrackFile(); read on the audio thread.
+    juce::AudioFormatManager trackFormatManager_;
+    juce::SpinLock           trackLock_;
+    struct TrackBuffer
+    {
+        juce::AudioBuffer<float> audio { 2, 0 };
+        bool    valid        = false;
+        int     sampleRate   = 44100;
+        int64_t totalSamples = 0;
+    };
+    TrackBuffer           trackBuffers_[kNumTracks];       // play buffers (may be BPM-stretched)
+    TrackBuffer           trackOriginalBuffers_[kNumTracks]; // pristine originals for re-stretch
+    float                 trackSourceBPM_[kNumTracks];       // assumed source BPM (default 120)
+    std::atomic<int64_t>  trackPlayPos_ { 0 };
+    std::atomic<int>      activeTrack_  { 0 };              // which track A–D is currently active
+
+    // Performs a TimeStretcher pass on trackOriginalBuffers_[activeTrack_] at globalBPM_.
+    // Heavy work runs outside the spinlock; only the buffer swap takes the lock.
+    void restretchActiveTrack();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };
