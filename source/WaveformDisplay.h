@@ -29,9 +29,22 @@ public:
             thumbnail.setSource (new juce::FileInputSource (file));
     }
 
+    // Use this when overwriting an existing file at the same path (e.g. splice output).
+    // AudioThumbnailCache keys on file-path hash, so calling loadFile() on an
+    // overwritten file returns the stale cached thumbnail. Clearing the cache first
+    // forces a fresh read from disk.
+    void forceReloadFile (const juce::File& file)
+    {
+        thumbnail.setSource (nullptr);
+        thumbnailCache.clear();
+        if (file.existsAsFile())
+            thumbnail.setSource (new juce::FileInputSource (file));
+    }
+
     void clear()
     {
-        thumbnail.clear();
+        thumbnail.setSource (nullptr);
+        thumbnailCache.clear();
         repaint();
     }
 

@@ -460,7 +460,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                 "permission in System Settings \xe2\x86\x92 Privacy & Security \xe2\x86\x92 Microphone.");
             return;
         }
-        recButton.setButtonText ("\xe2\x96\xa0 STOP");
+        recButton.setButtonText ("STOP");
         recButton.setColour (juce::TextButton::buttonColourId, juce::Colours::red);
     };
 
@@ -1103,8 +1103,7 @@ void PluginEditor::startSpliceRemix()
     }
     else
     {
-        // Simple mode: use both loaded tracks (interleaved) if a second track exists,
-        // otherwise fall back to the single active track.
+        // Simple mode: always operate on the single active track.
         if (! processorRef.isActiveTrackLoaded())
         {
             juce::AlertWindow::showMessageBoxAsync (
@@ -1114,10 +1113,9 @@ void PluginEditor::startSpliceRemix()
             return;
         }
 
-        if (processorRef.findNextLoadedTrack() >= 0)
-            processorRef.prepareFullInterleaveSpliceDir();
-        else
-            processorRef.prepareSimpleSpliceDir();
+        // SPLICE razor always operates on the single active track only.
+        // Two-track operations are exclusively for AUTO SPLICE / REGENERATE / RANDOMIZE.
+        processorRef.prepareSimpleSpliceDir();
 
         auto stemsDir = processorRef.getLastStemOutputDir();
         if (stemsDir == juce::File{}) return;
@@ -1131,7 +1129,7 @@ void PluginEditor::loadSpliceOutputWaveform()
     auto mixedFile  = processorRef.spliceThread.getMixedOutputFile();
 
     if (mixedFile.existsAsFile())
-        spliceOutputWaveform.loadFile (mixedFile);
+        spliceOutputWaveform.forceReloadFile (mixedFile);
 
     processorRef.loadSpliceOutput (stemsDir);
     splicePlayBtn.setToggleState (false, juce::dontSendNotification);
@@ -1140,6 +1138,21 @@ void PluginEditor::loadSpliceOutputWaveform()
 
 void PluginEditor::selectWaveform (int idx)
 {
+    // Toggle: clicking the already-selected waveform deselects it
+    if (idx == selectedWaveformIdx_)
+        idx = -1;
+
+    // If recording was active and we're deselecting, stop the recording
+    if (idx < 0 && processorRef.isRecording())
+    {
+        auto tempFile = processorRef.stopRecordingAndSave();
+        if (tempFile.existsAsFile() && recTargetTrack_ >= 0 && trackInputWaveforms[recTargetTrack_])
+            trackInputWaveforms[recTargetTrack_]->loadFile (tempFile);
+        recTargetTrack_ = -1;
+        recButton.setButtonText ("REC");
+        recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc83c2c));
+    }
+
     selectedWaveformIdx_ = idx;
 
     for (int t = 0; t < kNumTracks; ++t)
@@ -1147,6 +1160,4 @@ void PluginEditor::selectWaveform (int idx)
             trackInputWaveforms[t]->setSelected (t == idx);
 
     spliceOutputWaveform.setSelected (idx == 4);
-
-    recButton.setButtonText (idx >= 0 ? "REC \xe2\x97\x8f" : "REC");
 }

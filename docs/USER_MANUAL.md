@@ -20,7 +20,7 @@
    - [REGENERATE](#regenerate)
    - [RANDOMIZE](#randomize)
 9. [Stem Separation](#9-stem-separation)
-10. [Recording Output](#10-recording-output)
+10. [Recording (REC)](#10-recording-rec)
 11. [Settings](#11-settings)
 12. [Workflows & Tips](#12-workflows--tips)
 13. [Glossary](#13-glossary)
@@ -89,7 +89,7 @@ A rotary dial for setting the global target tempo. Turning it re-stretches the a
 Left to right: **Settings**, **Loop toggle**, **◀◀ Back**, **■ Stop**, **▶ Play**, **▶▶ Forward**.
 
 **Remix buttons (bottom-right)**
-**AUTO SPLICE**, **REGENERATE**, **RANDOMIZE**, and **REC** — the four main creative actions.
+**AUTO SPLICE**, **REGENERATE**, **RANDOMIZE**, and **REC** — the four main creative actions. AUTO SPLICE, REGENERATE, and RANDOMIZE all blend two tracks; the razor SPLICE works on a single track.
 
 **Options button (top-left corner)**
 Opens the UI inspector (a developer tool for layout debugging). Not part of the normal user workflow.
@@ -215,7 +215,9 @@ All splice operations work directly on **raw audio**. No stem separation require
 
 **SPLICE** *(the razor blade button)*
 
-Chops the **active track** into beats, shuffles them with a fixed random seed, and re-assembles the result at the target BPM. Every press with the same settings produces the same output (deterministic). Use this to preview what a splice sounds like at the current BPM.
+Chops the **active track only** into beats, shuffles them, and re-assembles the result at the target BPM. This is always a **single-track** operation — it never pulls in a second track regardless of how many tracks are loaded. Every press with the same file and BPM produces the same output (deterministic fixed seed). Use this to hear a beat-scrambled version of just the current track.
+
+> **SPLICE is not a transition between two clips.** For two-track blending, use AUTO SPLICE, REGENERATE, or RANDOMIZE.
 
 ---
 
@@ -231,48 +233,50 @@ To use Expertise Mode productively, run [Stem Separation](#9-stem-separation) fi
 
 ### AUTO SPLICE
 
-AUTO SPLICE is the true *mixtape* operation. It blends **two songs** together.
+AUTO SPLICE is the true *mixtape* operation. It creates a **morph transition** between two songs.
 
-**Simple mode:**
+**How it works:**
 
 1. Takes the **active track** and the **next loaded track** (e.g., A and B).
-2. Interleaves them in alternating 2-bar (8-beat) chunks: `[A · A] [B · B] [A · A] [B · B] …`
-3. Passes this combined audio through the splice engine — beat detection, shuffle, BPM normalization.
-4. The result in the Splice Output panel jumps between both songs at the beat level.
+2. Stitches them together as: `[Track A body] → [transition zone where A and B cross-fade at the beat level] → [Track B body]`.
+3. Only the crossing section is spliced — the bodies on each side are largely intact.
+4. The entire result is BPM-normalised to the target tempo.
 
-If only one track is loaded, AUTO SPLICE falls back to a single-track self-remix.
+The output feels like a DJ transition: Track A plays, the beats start interweaving from both tracks, then Track B takes over. If only one track is loaded, AUTO SPLICE falls back to a single-track self-remix.
 
-AUTO SPLICE uses a **fixed random seed**, so the same BPM and loaded tracks produce the same result every time. For a different arrangement, use [REGENERATE](#regenerate).
+AUTO SPLICE uses a **fixed random seed (42)**, so the same BPM and loaded tracks always produce the same transition. For a different arrangement of the same two tracks, use [REGENERATE](#regenerate).
 
 **Expertise mode (Cmd held):**
-Routes through each track's own registered stem directory. Track A uses `song1_stems/`, Track B uses `song2_stems/`, and so on — each independently shaped by that track's fader positions. Result uses seed 42 for reproducibility.
+Routes through each track's own registered stem directory. Track A uses `song1_stems/`, Track B uses `song2_stems/` — each independently shaped by that track's fader positions.
 
 ---
 
 ### REGENERATE
 
-REGENERATE runs the same two-track interleave as AUTO SPLICE but with a **new random seed** drawn from the clock at the moment you press it. Each press gives a completely different beat order at the same BPM.
+REGENERATE blends two tracks with a **full interleave** — alternating chunks from both songs throughout the entire output — using a **new random seed** drawn from the clock at the moment you press it. Each press gives a completely different beat arrangement at the same BPM.
 
-Use REGENERATE when you like the overall blend of two tracks but want to hear a fresh arrangement. Pair it with Loop to audition each version on repeat.
+Unlike AUTO SPLICE (which keeps the two songs mostly separate with a crossing zone), REGENERATE mixes both tracks from start to finish. Use it when you want the full shuffle-blend feeling rather than a smooth transition.
+
+Pair with Loop to audition each version on repeat without stopping.
 
 ---
 
 ### RANDOMIZE
 
-RANDOMIZE adds **per-beat tempo variation** on top of the shuffle. Instead of stretching every beat uniformly to the target BPM, each individual beat chunk is stretched by a random factor between **0.5× and 1.8×** of the target beat length.
+RANDOMIZE runs the same full two-track interleave as REGENERATE, then adds **per-beat tempo variation**. Instead of stretching every beat uniformly to the target BPM, each individual beat chunk is stretched by a random factor between **0.5× and 1.8×** of the target beat length.
 
 The effect: the tempo *wanders* throughout the piece. Some beats land early, some late. The overall structure is still beat-organized, but the mechanical clock disappears — more like a human performance or a lo-fi tape warble.
 
-RANDOMIZE also draws a new random seed each press, so every result is unique.
+RANDOMIZE draws a new random seed each press, so every result is unique.
 
 **When to reach for each button:**
 
-| Goal | Button |
-|---|---|
-| Same result every time, consistent tempo | AUTO SPLICE |
-| New beat arrangement, consistent tempo | REGENERATE |
-| New beat arrangement + wandering tempo | RANDOMIZE |
-| Self-remix of a single track | SPLICE (razor) |
+| Goal | Operation type | Button |
+|---|---|---|
+| Smooth transition between two tracks, same every time | Two-track morph | AUTO SPLICE |
+| Full shuffle of two tracks, consistent tempo, new each time | Two-track interleave | REGENERATE |
+| Full shuffle of two tracks + wandering tempo, new each time | Two-track interleave + warp | RANDOMIZE |
+| Beat-scramble of only the current track | Single-track | SPLICE (razor) |
 
 ---
 
@@ -323,11 +327,24 @@ Stems are written to `_stems/` next to the source file. Drop that same file onto
 
 ---
 
-## 10. Recording Output
+## 10. Recording (REC)
 
-The **REC** button (bottom-right, red) records the current Splice Output to a WAV file in your configured `export_output_dir` folder (see [Settings](#11-settings)).
+The **REC** button (bottom-right) records **live audio input** directly into a selected track slot, replacing that track's content.
 
-Press REC once to start recording; press again to stop and finalise the file. The recorded file is timestamped automatically so successive takes do not overwrite each other.
+### How to use REC
+
+1. **Select a target track** — click on any of the four track waveform panels (Track A, B, C, or D). The selected panel highlights with an orange border.
+2. **Press REC** — recording begins immediately from your audio input (microphone or audio interface). The button label changes to **STOP**.
+3. **Press STOP** (or click the selected waveform again to deselect) — recording ends. The captured audio is written into that track slot and its waveform renders in the panel, replacing whatever was there before.
+
+### Notes
+
+- REC records from your **audio device input**, not from the Splice Output. It captures whatever is coming into the application's input channels.
+- Maximum recording length is **5 minutes** per take. Recording stops automatically if the buffer fills.
+- On macOS, the application requires **microphone permission** the first time you use REC. Grant access in **System Settings → Privacy & Security → Microphone** if prompted.
+- If no audio input channels are available (e.g., running with no interface), an alert will tell you what to check.
+- Clicking a selected waveform a second time **deselects** it and stops any active recording.
+- The recorded audio becomes a normal track — you can play it, splice it, and separate its stems just like any dropped file.
 
 ---
 
@@ -366,9 +383,10 @@ All other file path configuration (stem model location, stem output folder, audi
 
 1. Drop one track onto Track A.
 2. Dial in the track's original BPM on the knob.
-3. Press **SPLICE** (razor) for a deterministic self-remix at that BPM.
-4. Press **REGENERATE** to hear a differently shuffled version each time.
-5. Try **RANDOMIZE** to introduce tempo drift throughout the piece.
+3. Press **SPLICE** (razor) for a deterministic beat-scramble of that track. The result is in the Splice Output panel.
+4. Adjust the BPM knob and press SPLICE again to hear how the same track sounds at a different tempo.
+
+> REGENERATE and RANDOMIZE require two loaded tracks. With only Track A loaded, use SPLICE for single-track remixing.
 
 ### Workflow C — Expert stem blend (Expertise Mode)
 
@@ -381,6 +399,14 @@ All other file path configuration (stem model location, stem output folder, audi
 7. Shape Track B's faders however you like (different from Track A — each track's faders are independent).
 8. Hold **Cmd** and press **AUTO SPLICE** to blend both tracks' shaped stem inputs into the final splice output.
 
+### Workflow D — Record live audio into a track
+
+1. Connect a microphone or audio interface. Confirm the device appears in your system audio settings.
+2. Click **Track A** (or any empty track) to select it — the orange border confirms selection.
+3. Press **REC** and perform or play your audio source.
+4. Press **STOP** when done. The waveform appears in that track slot.
+5. Continue: press SPLICE to beat-scramble the live recording, or drop another track into Track B and use AUTO SPLICE to blend them.
+
 ### Tips
 
 - **BPM first.** Set your target BPM *before* pressing any splice button. Changing BPM after a splice does not automatically redo the splice — you need to press the splice button again.
@@ -389,7 +415,7 @@ All other file path configuration (stem model location, stem output folder, audi
 - **Loop + REGENERATE is the fastest audition flow.** Enable Loop, press REGENERATE, let it play, press again for the next version — no stopping or restarting needed.
 - **Stems save time.** Separate once; the `_stems/` folder is auto-detected every future session so you never re-run the slow Demucs pass.
 - **BPM mismatch is a feature.** Splicing a 90 BPM track at 180 BPM produces a double-time glitch effect. Splicing at 45 BPM produces a half-time woozy feel. Both can be musically compelling.
-- **REC captures exactly the splice output.** Whatever is in the Splice Output panel is what gets recorded. Make sure you hear the version you want before pressing REC.
+- **REC replaces a track.** Select the target waveform panel first (orange border appears), then press REC. The recording replaces that track's audio — it does not record the Splice Output.
 
 ---
 
@@ -407,9 +433,11 @@ All other file path configuration (stem model location, stem output folder, audi
 
 **Phase vocoder** — The time-stretching algorithm behind the BPM slider. Changes tempo without changing pitch by manipulating audio frequency-component phase relationships.
 
-**RANDOMIZE** — A splice pass where each beat chunk is individually time-stretched by a random factor (0.5×–1.8× of the target beat length), producing non-uniform tempo variation.
+**RANDOMIZE** — A two-track splice pass (same full interleave as REGENERATE) where each beat chunk is additionally time-stretched by a random factor (0.5×–1.8× of the target beat length), producing non-uniform tempo variation across the output.
 
-**REGENERATE** — A splice pass identical in structure to AUTO SPLICE but using a new random seed, yielding a different beat shuffle each time.
+**REC** — Records live audio input into a selected track slot, replacing its content. Activated by selecting a waveform panel then pressing REC; stopped by pressing STOP or deselecting the panel.
+
+**REGENERATE** — A two-track full-interleave splice pass using a new random seed drawn from the clock, yielding a different beat shuffle each time at the target BPM. Unlike AUTO SPLICE (morph transition), REGENERATE interleaves both tracks throughout the entire output.
 
 **Seed** — A number used to initialise a random number generator. The same seed always produces the same shuffle. AUTO SPLICE uses seed 42 (fixed, reproducible); REGENERATE and RANDOMIZE draw from the clock (always different).
 
