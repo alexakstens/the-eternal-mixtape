@@ -38,15 +38,18 @@ public:
                     bool         skipTimeWarp   = false,
                     float        density        = 0.5f,
                     bool         randomizeTime  = false,
-                    unsigned int seed           = 42)
+                    unsigned int seed           = 42,
+                    const float* stemGainsIn    = nullptr)
     {
-        stemsDir      = stemsDirectory;
-        srcBPM        = sourceBPM;
-        tgtBPM        = targetBPM;
-        skipWarp      = skipTimeWarp;
-        density_      = juce::jlimit (0.0f, 1.0f, density);
+        stemsDir       = stemsDirectory;
+        srcBPM         = sourceBPM;
+        tgtBPM         = targetBPM;
+        skipWarp       = skipTimeWarp;
+        density_       = juce::jlimit (0.0f, 1.0f, density);
         randomizeTime_ = randomizeTime;
         seed_          = seed;
+        for (int i = 0; i < 4; ++i)
+            stemGains_[i] = (stemGainsIn != nullptr) ? juce::jlimit (0.0f, 2.0f, stemGainsIn[i]) : 1.0f;
     }
 
     juce::File getMixedOutputFile() const { return stemsDir.getChildFile ("splice_output.wav"); }
@@ -76,15 +79,16 @@ public:
         int sampleRate   = 44100;
         int totalSamples = 0;
 
+        int stemIdx = 0;
         for (auto& name : stemNames)
         {
             if (threadShouldExit()) return;
 
             auto f = stemsDir.getChildFile (name);
-            if (! f.existsAsFile()) continue;
+            if (! f.existsAsFile()) { ++stemIdx; continue; }
 
             std::unique_ptr<juce::AudioFormatReader> reader (fmtMgr.createReaderFor (f));
-            if (! reader) continue;
+            if (! reader) { ++stemIdx; continue; }
 
             sampleRate   = (int) reader->sampleRate;
             int numCh    = (int) reader->numChannels;
@@ -94,6 +98,12 @@ public:
             juce::AudioBuffer<float> buf (numCh, numSmp);
             reader->read (&buf, 0, numSmp, 0, true, true);
 
+            // Apply per-stem gain (from track faders) at the read stage so that
+            // both the per-stem output files and the mixed preview bake it in.
+            const float g = stemGains_[stemIdx < 4 ? stemIdx : 0];
+            if (! juce::approximatelyEqual (g, 1.0f))
+                buf.applyGain (g);
+
             StemChannels channels;
             for (int c = 0; c < numCh; ++c)
                 channels.push_back ({ buf.getReadPointer (c),
@@ -101,6 +111,7 @@ public:
             if ((int) channels.size() == 1)
                 channels.push_back (channels[0]);   // mono → stereo
             allStems.push_back (std::move (channels));
+            ++stemIdx;
         }
 
         if (allStems.empty())
@@ -360,8 +371,9 @@ private:
     double       tgtBPM        = 120.0;
     bool         skipWarp      = false;
     float        density_      = 0.5f;
-    bool         randomizeTime_ = false; // RANDOMIZE mode: per-beat tempo variation
-    unsigned int seed_          = 42;    // 42 = reproducible; clock-seeded = unique each run
+    bool         randomizeTime_ = false;
+    unsigned int seed_          = 42;
+    float        stemGains_[4]  = { 1.0f, 1.0f, 1.0f, 1.0f };
     double       detectedSrcBPM = 120.0;
 
     std::atomic<float>  progress { 0.0f };

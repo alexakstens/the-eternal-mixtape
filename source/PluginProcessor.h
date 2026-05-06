@@ -96,6 +96,9 @@ public:
     void setTrackGain (int trackIndex, float gain);
     float getTrackGain (int trackIndex) const;
     void setTrackStemGain (int trackIndex, int stemIndex, float gain);
+    // Re-read stem files for a track, apply current stemGain[], and store the result in the
+    // track buffer so regular playback immediately reflects the new fader positions.
+    void remixTrackFromStems (int trackIndex);
     void setTrackPan (int trackIndex, float pan);
     void setTrackStemMute (int trackIndex, int stemIndex, bool muted);
 

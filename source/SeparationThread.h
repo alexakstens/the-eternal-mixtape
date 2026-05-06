@@ -85,33 +85,72 @@ public:
                 {
                     opts.AppendExecutionProvider_CUDA (cudaOpts);
                     gpuEnabled = true;
+                    statusMessage = "Loading model (GPU)... this may take 1-2 min";
                 }
                 catch (const Ort::Exception&)
                 {
                     gpuEnabled = false;
+                    statusMessage = "CUDA unavailable — loading model on CPU... (may take several minutes)";
                 }
+            }
+            else
+            {
+                statusMessage = "Loading model on CPU... this may take several minutes";
             }
 
             if (threadShouldExit()) return;
 
             {
-                std::ifstream f (modelFile.getFullPathName().toStdString(),
-                                 std::ios::binary);
-                if (! f)
+                // Use the file-path ORT constructor so ORT can locate the companion
+                // .onnx.data external-weights file in the same directory.
+                // The from-memory overload (load_model with vector<char>) loses the
+                // directory reference and ORT fails to find htdemucs.onnx.data.
+                auto modelPath = modelFile.getFullPathName().toStdString();
+                if (! modelFile.existsAsFile())
                 {
-                    errorMessage = "Failed to open model: " + modelFile.getFileName();
+                    statusMessage = errorMessage = "Model file not found: " + modelFile.getFullPathName();
                     status.store (Status::Error);
                     return;
                 }
-                std::vector<char> modelData ((std::istreambuf_iterator<char> (f)),
-                                              std::istreambuf_iterator<char>());
 
-                if (! demucsonnx::load_model (modelData, model, opts))
+                try
                 {
-                    errorMessage = "Failed to load model: " + modelFile.getFileName();
+                    model.sess = std::make_unique<Ort::Session> (
+                        model.env, modelPath.c_str(), opts);
+                }
+                catch (const Ort::Exception& e)
+                {
+                    statusMessage = errorMessage = juce::String ("ORT session error: ") + e.what();
                     status.store (Status::Error);
                     return;
                 }
+
+                // Mirror the post-session setup from demucsonnx::load_model
+                {
+                    Ort::AllocatorWithDefaultOptions alloc;
+                    auto in0 = model.sess->GetInputNameAllocated (0, alloc);
+                    auto in1 = model.sess->GetInputNameAllocated (1, alloc);
+                    model.input_names.push_back (in0.get());
+                    model.input_names.push_back (in1.get());
+
+                    auto out0 = model.sess->GetOutputNameAllocated (0, alloc);
+                    auto out1 = model.sess->GetOutputNameAllocated (1, alloc);
+                    model.output_names.push_back (out0.get());
+                    model.output_names.push_back (out1.get());
+                }
+
+                for (const auto& n : model.input_names)  model.input_names_ptrs.push_back (n.c_str());
+                for (const auto& n : model.output_names) model.output_names_ptrs.push_back (n.c_str());
+
+                auto shape0 = model.sess->GetOutputTypeInfo (0).GetTensorTypeAndShapeInfo().GetShape();
+                auto shape1 = model.sess->GetOutputTypeInfo (1).GetTensorTypeAndShapeInfo().GetShape();
+                if (shape0[1] != shape1[1])
+                {
+                    statusMessage = errorMessage = "Unexpected model output shape — is this a Demucs model?";
+                    status.store (Status::Error);
+                    return;
+                }
+                model.nb_sources = static_cast<int> (shape0[1]);
             }
 
             if (threadShouldExit()) return;
@@ -128,7 +167,7 @@ public:
 
             if (! reader)
             {
-                errorMessage = "Failed to read audio file: " + inputFile.getFileName();
+                statusMessage = errorMessage = "Cannot read audio: " + inputFile.getFileName();
                 status.store (Status::Error);
                 return;
             }
@@ -140,7 +179,7 @@ public:
             // Validate metadata from potentially malformed files
             if (sourceSampleRate <= 0.0)
             {
-                errorMessage = "Invalid sample rate in audio file: " + inputFile.getFileName();
+                statusMessage = errorMessage = "Invalid sample rate in: " + inputFile.getFileName();
                 status.store (Status::Error);
                 return;
             }
@@ -149,7 +188,7 @@ public:
             const int64_t maxSamples = static_cast<int64_t> (sourceSampleRate * 60.0 * 30.0);
             if (rawLength <= 0 || rawLength > maxSamples)
             {
-                errorMessage = "Audio file has invalid or unsupported length: " + inputFile.getFileName();
+                statusMessage = errorMessage = "Unsupported length: " + inputFile.getFileName();
                 status.store (Status::Error);
                 return;
             }
@@ -248,7 +287,7 @@ public:
                 auto outStream = stemFile.createOutputStream();
                 if (! outStream)
                 {
-                    errorMessage = "Failed to create file: " + stemFile.getFileName();
+                    statusMessage = errorMessage = "Cannot write stem: " + stemFile.getFileName();
                     status.store (Status::Error);
                     return;
                 }
@@ -269,7 +308,7 @@ public:
         }
         catch (const std::exception& e)
         {
-            errorMessage = juce::String ("Error: ") + e.what();
+            statusMessage = errorMessage = juce::String ("Error: ") + e.what();
             status.store (Status::Error);
         }
 #endif // ENABLE_DEMUCS

@@ -219,19 +219,23 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // Mix in splice output playback (per-stem with track gains)
+    // Mix in splice output playback (per-stem gains from the active track's stem faders)
     if (spliceIsPlaying_.load())
     {
         const juce::SpinLock::ScopedTryLockType tryLock (spliceLock_);
         if (tryLock.isLocked() && spliceTotalSamples_ > 0)
         {
-            const int numOut = buffer.getNumSamples();
-            int64_t pos      = splicePlayPos_.load();
+            const int numOut    = buffer.getNumSamples();
+            int64_t pos         = splicePlayPos_.load();
+            const int activeT   = activeTrack_.load();
 
             for (int si = 0; si < kNumTracks; ++si)
             {
                 if (! spliceStems_[si].valid) continue;
-                const float gain = getTrackGain (si);
+                // Apply the per-stem gain (drums/bass/other/vocals fader) from the active track.
+                const float gain = juce::isPositiveAndBelow (activeT, kNumTracks)
+                                       ? trackState_[activeT].stemGain[si]
+                                       : 1.0f;
                 const auto& stemBuf = spliceStems_[si].audio;
 
                 for (int c = 0; c < std::min (2, buffer.getNumChannels()); ++c)
@@ -592,8 +596,69 @@ float PluginProcessor::getTrackGain (int trackIndex) const
 
 void PluginProcessor::setTrackStemGain (int trackIndex, int stemIndex, float gain)
 {
-    if (juce::isPositiveAndBelow (trackIndex, kNumTracks) && stemIndex >= 0 && stemIndex < 2)
+    if (juce::isPositiveAndBelow (trackIndex, kNumTracks) && juce::isPositiveAndBelow (stemIndex, 4))
         trackState_[trackIndex].stemGain[stemIndex] = juce::jlimit (0.0f, 2.0f, gain);
+}
+
+void PluginProcessor::remixTrackFromStems (int trackIndex)
+{
+    if (! juce::isPositiveAndBelow (trackIndex, kNumTracks)) return;
+
+    const auto stemDir = stemOutputDirs_[trackIndex];
+    if (stemDir == juce::File{} || ! stemDir.isDirectory()) return;
+
+    const juce::StringArray stemNames { "drums.wav", "bass.wav", "other.wav", "vocals.wav" };
+
+    juce::AudioFormatManager fmt;
+    fmt.registerBasicFormats();
+
+    // Load each stem that exists, apply its gain, and sum into a mixed buffer.
+    juce::AudioBuffer<float> mixed;
+    int sampleRate = 44100;
+    bool hasAny = false;
+
+    for (int si = 0; si < 4; ++si)
+    {
+        auto f = stemDir.getChildFile (stemNames[si]);
+        if (! f.existsAsFile()) continue;
+
+        std::unique_ptr<juce::AudioFormatReader> reader (fmt.createReaderFor (f));
+        if (! reader) continue;
+
+        const int numSmp = (int) reader->lengthInSamples;
+        const int numCh  = std::min (2, (int) reader->numChannels);
+        sampleRate = (int) reader->sampleRate;
+
+        juce::AudioBuffer<float> stemBuf (numCh, numSmp);
+        reader->read (&stemBuf, 0, numSmp, 0, true, numCh > 1);
+
+        if (! hasAny)
+        {
+            mixed.setSize (2, numSmp, false, true, false);
+            mixed.clear();
+            hasAny = true;
+        }
+
+        const float gain = trackState_[trackIndex].stemGain[si];
+        const int   len  = std::min (numSmp, mixed.getNumSamples());
+
+        for (int c = 0; c < 2; ++c)
+        {
+            const int srcCh = (c < numCh) ? c : 0;
+            mixed.addFrom (c, 0, stemBuf, srcCh, 0, len, gain);
+        }
+    }
+
+    if (! hasAny) return;
+
+    // Store the re-mixed buffer as the track's playback source
+    {
+        const juce::SpinLock::ScopedLockType lk (trackLock_);
+        trackBuffers_[trackIndex].audio      = std::move (mixed);
+        trackBuffers_[trackIndex].sampleRate = sampleRate;
+        trackBuffers_[trackIndex].totalSamples = trackBuffers_[trackIndex].audio.getNumSamples();
+        trackBuffers_[trackIndex].valid      = true;
+    }
 }
 
 void PluginProcessor::setTrackPan (int trackIndex, float pan)
@@ -649,7 +714,12 @@ void PluginProcessor::requestSplice (const juce::File& stemsDir,
 {
     if (spliceThread.isThreadRunning())
         return;
-    spliceThread.configure (stemsDir, sourceBPM, targetBPM, skipWarp, density, randomizeTime, seed);
+    // Pass the active track's stem gains so the splice output bakes the fader positions.
+    const int t = activeTrack_.load();
+    const float* gains = juce::isPositiveAndBelow (t, kNumTracks)
+                             ? trackState_[t].stemGain
+                             : nullptr;
+    spliceThread.configure (stemsDir, sourceBPM, targetBPM, skipWarp, density, randomizeTime, seed, gains);
     spliceThread.startThread();
 }
 

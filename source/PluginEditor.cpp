@@ -169,6 +169,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             sl.setValue (1.0);
             sl.onValueChange = [this, i, s] {
                 processorRef.setTrackStemGain (i, s, (float) trackStemSliders[i][s].getValue());
+                // Debounce: re-mix stems into the track buffer 300ms after the fader settles
+                stemGainDebounce_[i] = 3;
             };
             addAndMakeVisible (sl);
         }
@@ -503,7 +505,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     stemProcessButton.onClick = [this] { startStemSeparation(); };
     stemCancelButton.onClick  = [this] { cancelStemSeparation(); };
 
-    stemCudaToggle.setToggleState (true, juce::dontSendNotification);
+    stemCudaToggle.setToggleState (false, juce::dontSendNotification);
     addAndMakeVisible (stemCudaToggle);
     addAndMakeVisible (stemProgressBar);
 
@@ -615,8 +617,11 @@ void PluginEditor::timerCallback()
     // Stem separation progress
     auto& thread = processorRef.separationThread;
     stemProgressValue = static_cast<double> (thread.getProgress());
-    stemStatusLabel.setText (thread.getStatusMessage(), juce::dontSendNotification);
     bool isRunning = thread.isThreadRunning();
+    // Only overwrite the label while thread is active or has finished with a result;
+    // leave "Ready" showing when the thread has never been started (Idle + not running).
+    if (isRunning || thread.getStatus() != SeparationThread::Status::Idle)
+        stemStatusLabel.setText (thread.getStatusMessage(), juce::dontSendNotification);
     stemProcessButton.setEnabled (! isRunning);
     stemCancelButton.setEnabled (isRunning);
 
@@ -637,6 +642,17 @@ void PluginEditor::timerCallback()
     {
         if (--bpmChangeDebounceCounter_ == 0)
             processorRef.triggerBpmRestretch();
+    }
+
+    // Stem-gain debounce: 300ms after any fader settles, re-mix stems into the track buffer
+    // so that regular track playback immediately reflects the new stem balance.
+    for (int t = 0; t < 4; ++t)
+    {
+        if (stemGainDebounce_[t] > 0)
+        {
+            if (--stemGainDebounce_[t] == 0)
+                processorRef.remixTrackFromStems (t);
+        }
     }
 
     // Sync play button toggle with actual transport state

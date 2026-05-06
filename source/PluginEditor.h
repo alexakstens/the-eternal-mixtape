@@ -128,6 +128,8 @@ private:
 
     // BPM debounce: counts down at 10 Hz; triggers re-stretch when it reaches 0
     int bpmChangeDebounceCounter_ = 0;
+    // Per-track debounce: after fader moves stop, re-mix stems into track buffer (3 × 100ms)
+    int stemGainDebounce_[4] = { 0, 0, 0, 0 };
 
     // REC selection: -1 = none, 0–3 = track panels, 4 = splice output
     int selectedWaveformIdx_ = -1;

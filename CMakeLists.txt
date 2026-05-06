@@ -35,13 +35,33 @@ project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 set(DEMUCS_ONNX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/demucs.onnx" CACHE PATH
     "Path to the demucs.onnx submodule root")
 
-# Path to ONNX Runtime GPU package
-set(ONNXRUNTIME_ROOT "C:/Users/ryanb/onnxruntime-win-x64-gpu-1.24.1" CACHE PATH
-    "Path to extracted ONNX Runtime GPU package")
+# ── ORT include path ──────────────────────────────────────────────────────────
+# The demucs.onnx sources use <onnxruntime/core/session/onnxruntime_cxx_api.h>.
+# The vendored ORT source tree already has that layout under vendor/onnxruntime/include/.
+# On Windows the flat prebuilt layout needs the ort-compat shim instead.
+if (APPLE OR UNIX)
+    # macOS/Linux: use vendor include tree (correct sub-path structure already present)
+    set(ONNXRUNTIME_INCLUDE_DIR "${DEMUCS_ONNX_ROOT}/vendor/onnxruntime/include" CACHE PATH
+        "Directory containing <onnxruntime/core/session/...> headers")
+else()
+    # Windows: prebuilt package has flat headers — shim re-creates the sub-path
+    set(ONNXRUNTIME_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source/ort-compat" CACHE PATH
+        "ORT compat shim directory for Windows flat-include layout")
+endif()
 
-# ORT include shim: demucs.onnx uses <onnxruntime/core/session/...> paths but
-# the pre-built Windows package places headers at a flat level.
-set(ORT_COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source/ort-compat")
+# ── ORT library path ──────────────────────────────────────────────────────────
+# macOS  → onnxruntime-osx-arm64-1.21.0/lib   (prebuilt dylib, downloaded once)
+# Windows → ryanb's GPU package
+if (APPLE)
+    set(ONNXRUNTIME_LIB_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-osx-arm64-1.21.0/lib"
+        CACHE PATH "Directory containing libonnxruntime.dylib")
+elseif (UNIX)
+    set(ONNXRUNTIME_LIB_DIR "" CACHE PATH "Directory containing libonnxruntime.so")
+else()
+    set(ONNXRUNTIME_LIB_DIR "C:/Users/ryanb/onnxruntime-win-x64-gpu-1.24.1/lib" CACHE PATH
+        "Directory containing onnxruntime.lib/.dll")
+endif()
 
 # Build demucs.onnx inference core as a static library (no CLI, no embedded models).
 # Set ENABLE_DEMUCS=OFF to build a stub interface lib instead — useful for UI-only
@@ -54,10 +74,11 @@ if (ENABLE_DEMUCS)
     target_include_directories(demucs_onnx_core PUBLIC
         "${DEMUCS_ONNX_ROOT}/src"
         "${DEMUCS_ONNX_ROOT}/vendor/eigen"
-        "${ONNXRUNTIME_ROOT}/include"
-        "${ORT_COMPAT_DIR}"
+        "${ONNXRUNTIME_INCLUDE_DIR}"
     )
-    target_link_directories(demucs_onnx_core PUBLIC "${ONNXRUNTIME_ROOT}/lib")
+    if (ONNXRUNTIME_LIB_DIR)
+        target_link_directories(demucs_onnx_core PUBLIC "${ONNXRUNTIME_LIB_DIR}")
+    endif()
     target_link_libraries(demucs_onnx_core PUBLIC onnxruntime)
     target_compile_features(demucs_onnx_core PUBLIC cxx_std_20)
     target_compile_definitions(demucs_onnx_core PUBLIC ENABLE_DEMUCS=1)
@@ -66,6 +87,9 @@ if (ENABLE_DEMUCS)
         target_compile_definitions(demucs_onnx_core PUBLIC NOMINMAX _USE_MATH_DEFINES)
         target_compile_options(demucs_onnx_core PRIVATE /W3 /wd4554 /wd4267 /wd4244)
     endif()
+
+    message(STATUS "Demucs: ORT includes = ${ONNXRUNTIME_INCLUDE_DIR}")
+    message(STATUS "Demucs: ORT lib dir  = ${ONNXRUNTIME_LIB_DIR}")
 else()
     add_library(demucs_onnx_core INTERFACE)
     target_compile_definitions(demucs_onnx_core INTERFACE ENABLE_DEMUCS=0)
@@ -157,7 +181,7 @@ clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
 include(SharedCodeDefaults)
 
 # Source files
-file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS
+file(GLOB_RECURSE SourceFiles
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
 target_sources(SharedCode INTERFACE ${SourceFiles})
@@ -243,6 +267,20 @@ if (WIN32 AND CUDNN_BIN_DIR STREQUAL "")
     endif()
 endif()
 
+if (APPLE AND ENABLE_DEMUCS)
+    # On macOS, copy libonnxruntime.dylib into the .app bundle so it is found at runtime.
+    set(_STANDALONE_TARGET "${PROJECT_NAME}_Standalone")
+    add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.1.21.0.dylib"
+            "$<TARGET_FILE_DIR:${_STANDALONE_TARGET}>/../Frameworks/libonnxruntime.1.21.0.dylib"
+        COMMAND install_name_tool -change
+            "@rpath/libonnxruntime.1.21.0.dylib"
+            "@executable_path/../Frameworks/libonnxruntime.1.21.0.dylib"
+            "$<TARGET_FILE:${_STANDALONE_TARGET}>"
+        COMMENT "Copying ORT dylib into app bundle Frameworks")
+endif()
+
 if (WIN32)
     # Copy DLLs next to the standalone executable.
     # Use the _Standalone target so TARGET_FILE_DIR resolves to the exe directory
@@ -250,7 +288,7 @@ if (WIN32)
     set(_STANDALONE_TARGET "${PROJECT_NAME}_Standalone")
 
     # Copy ONNX Runtime DLLs
-    file(GLOB ORT_DLLS "${ONNXRUNTIME_ROOT}/lib/*.dll")
+    file(GLOB ORT_DLLS "${ONNXRUNTIME_LIB_DIR}/*.dll")
     foreach(DLL ${ORT_DLLS})
         add_custom_command(TARGET ${_STANDALONE_TARGET} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
